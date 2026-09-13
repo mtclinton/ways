@@ -72,8 +72,9 @@ describe("sandbox job", () => {
     expect(cmd).not.toContain("txtnuname");
     expect(cmd).toContain("SPEC.txt");
     expect(cmd).toContain("uname");
-    // newlines must be turned into "; " before JSON.stringify for bash -lc
     expect(cmd).toContain("; uname -a");
-    expect(JSON.parse(cmd.slice("bash -lc ".length))).not.toMatch(/\n/);
+    // single-quoted -lc so jq $spec is not expanded by the wrapper shell
+    expect(cmd.startsWith("bash -lc '")).toBe(true);
+    expect(cmd).toContain("spec:$spec");
   });
 });

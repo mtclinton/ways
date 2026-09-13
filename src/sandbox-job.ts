@@ -13,6 +13,9 @@ export function slice1Script(spec: string): string {
 }
 
 export function sandboxCommand(spec: string): string {
-  // bash -lc "..." collapses \n → n inside double quotes; join with "; " instead.
-  return `bash -lc ${JSON.stringify(slice1Script(spec).replace(/\n/g, "; "))}`;
+  // bash -lc "..." (via JSON.stringify) collapses \n → n and expands $vars.
+  // Prefer a single-line script joined with "; ", wrapped in single quotes.
+  const script = slice1Script(spec).replace(/\n/g, "; ");
+  const sq = script.replace(/'/g, `'\\''`);
+  return `bash -lc '${sq}'`;
 }
