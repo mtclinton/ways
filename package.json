@@ -1,0 +1,29 @@
+{
+  "name": "ways",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent shipyard on Cloudflare. Slice 1: one run, one sandbox, one trace.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "check": "tsc --noEmit && vitest run",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.7.0",
+    "agents": "^0.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.40.0"
+  }
+}
