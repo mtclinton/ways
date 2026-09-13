@@ -13,12 +13,6 @@
     "enabled": true,
     "logs": { "enabled": true }
   },
-  "artifacts": [
-    {
-      "binding": "ARTIFACTS",
-      "namespace": "ways"
-    }
-  ],
   "containers": [
     {
       "class_name": "Sandbox",
