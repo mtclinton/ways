@@ -66,4 +66,14 @@ describe("sandbox job", () => {
     expect(script).toContain(`'it'\\''s a spec'`);
     expect(sandboxCommand("x").startsWith("bash -lc ")).toBe(true);
   });
+
+  it("does not glue SPEC.txt to uname via collapsed newlines", () => {
+    const cmd = sandboxCommand("slice1 smoke");
+    expect(cmd).not.toContain("txtnuname");
+    expect(cmd).toContain("SPEC.txt");
+    expect(cmd).toContain("uname");
+    // newlines must be turned into "; " before JSON.stringify for bash -lc
+    expect(cmd).toContain("; uname -a");
+    expect(JSON.parse(cmd.slice("bash -lc ".length))).not.toMatch(/\n/);
+  });
 });

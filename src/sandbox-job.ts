@@ -13,5 +13,6 @@ export function slice1Script(spec: string): string {
 }
 
 export function sandboxCommand(spec: string): string {
-  return `bash -lc ${JSON.stringify(slice1Script(spec))}`;
+  // bash -lc "..." collapses \n → n inside double quotes; join with "; " instead.
+  return `bash -lc ${JSON.stringify(slice1Script(spec).replace(/\n/g, "; "))}`;
 }
