@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ways · slice 1</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0c0c0e;
+        --ink: #ecece8;
+        --muted: #8a8a86;
+        --line: #2a2a28;
+        --fail: #d4654f;
+        --ok: #7ea36b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      main { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
+      h1 { font-weight: 560; letter-spacing: -0.02em; margin: 0 0 8px; }
+      .sub { color: var(--muted); margin-bottom: 28px; }
+      textarea {
+        width: 100%;
+        min-height: 120px;
+        background: #161616;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      button {
+        margin-top: 12px;
+        background: var(--ink);
+        color: var(--bg);
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { margin-top: 28px; }
+      ol { padding-left: 18px; }
+      .phase { font-variant-numeric: tabular-nums; color: var(--muted); }
+      .done { color: var(--ok); }
+      .failed { color: var(--fail); }
+      pre {
+        background: #161616;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        overflow: auto;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>ways</h1>
+      <p class="sub">Slice 1 contract: accept a spec, run it in a sandbox, return a trace. No git clone. No deploy. No wallet.</p>
+      <textarea id="spec">print a RESULT.json that echoes this spec and the sandbox host</textarea>
+      <div><button id="go" type="button">Start run</button></div>
+      <section id="status" hidden>
+        <p id="phase" class="phase"></p>
+        <ol id="events"></ol>
+        <pre id="out"></pre>
+      </section>
+    </main>
+    <script type="module">
+      const specEl = document.getElementById("spec");
+      const go = document.getElementById("go");
+      const status = document.getElementById("status");
+      const phaseEl = document.getElementById("phase");
+      const eventsEl = document.getElementById("events");
+      const outEl = document.getElementById("out");
+
+      go.addEventListener("click", async () => {
+        go.disabled = true;
+        status.hidden = false;
+        phaseEl.textContent = "starting…";
+        eventsEl.replaceChildren();
+        outEl.textContent = "";
+        try {
+          const res = await fetch("/api/runs", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ spec: specEl.value }),
+          });
+          const body = await res.json();
+          if (!res.ok) {
+            phaseEl.textContent = `error ${res.status}`;
+            outEl.textContent = JSON.stringify(body, null, 2);
+            return;
+          }
+          await poll(body.id);
+        } catch (err) {
+          phaseEl.textContent = "failed";
+          outEl.textContent = String(err);
+        } finally {
+          go.disabled = false;
+        }
+      });
+
+      async function poll(id) {
+        for (let i = 0; i < 60; i++) {
+          const res = await fetch(`/api/runs/${id}`);
+          const run = await res.json();
+          render(run);
+          if (run.phase === "done" || run.phase === "failed") return;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        phaseEl.textContent = "timed out waiting for terminal phase";
+      }
+
+      function render(run) {
+        phaseEl.textContent = `${run.id} · ${run.phase}`;
+        phaseEl.className = "phase " + run.phase;
+        eventsEl.replaceChildren();
+        for (const ev of run.events ?? []) {
+          const li = document.createElement("li");
+          li.textContent = `${ev.phase} — ${ev.message}`;
+          eventsEl.append(li);
+        }
+        outEl.textContent = JSON.stringify(
+          {
+            artifact: run.artifact ?? null,
+            result: run.result ?? null,
+            error: run.error ?? null,
+          },
+          null,
+          2,
+        );
+      }
+    </script>
+  </body>
+</html>
