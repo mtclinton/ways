@@ -56,3 +56,19 @@ Clarifies phase vs execute for gitUrl runs (Keel dogfood 2026-09-13).
 3. Spec-only (Slice 1) unchanged: sandbox script failure still fails the run.
 4. `GET /api/runs/:id` may include `result.json` — parsed `RESULT.json` from `result.stdout` when stdout is JSON — so clients need not scrape.
 5. Execute stdout/stderr remain capped at 8KB; install/test timeouts remain 60s.
+
+# Slice 1.2.2 contract
+
+Skip execute when a lite sandbox cannot finish install. Do not burn 60s writing empty timeout logs.
+
+After `clone === "ok"`:
+
+1. No `package.json` → `execute.status = "skipped"`, `reason = "no-package-json"`.
+2. If `package.json` lists `wrangler`, `next`, `vite`, `webpack`, or `@cloudflare/vite-plugin` in `dependencies` or `devDependencies` → do **not** `npm install`. `execute.status = "skipped"`, `reason = "heavy-install"`.
+3. Else: `npm install --omit=dev --no-audit --no-fund` with **30s** timeout.
+   - timeout → `skipped` / `install-timeout` (no `npm test`)
+   - non-zero → `skipped` / `install-failed` (no `npm test`)
+4. Only if install exit 0: `npm test` with **30s** timeout → `ok` | `failed` | `timeout` as before.
+5. Phase rule from 1.2.1 unchanged: `clone === "ok"` ⇒ `phase === "done"`.
+6. `RESULT.json` `execute` may include optional `reason` when skipped.
+7. `spec` is never executed as shell.

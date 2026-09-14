@@ -10,6 +10,7 @@ import {
 import {
   EXEC_OUTPUT_LIMIT,
   mapExecuteStatus,
+  planExecuteFromPackageJson,
   sandboxCommand,
   slice1Script,
   truncateExecOutput,
@@ -208,18 +209,45 @@ describe("sandbox job", () => {
     expect(cmd.startsWith("bash -lc '")).toBe(true);
   });
 
-  it("includes shallow clone + npm execute when gitUrl set", () => {
+  it("includes shallow clone + heavy-install skip when gitUrl set", () => {
     const cmd = sandboxCommand({
       spec: "clone ways",
       gitUrl: "https://github.com/mtclinton/ways.git",
     });
     expect(cmd).toContain("git clone --depth 1 --single-branch");
-    expect(cmd).toContain("npm install --omit=dev");
-    expect(cmd).toContain("npm test");
-    expect(cmd).toContain("timeout 60");
+    expect(cmd).toContain("heavy-install");
+    expect(cmd).toContain("npm install --omit=dev --no-audit --no-fund");
+    expect(cmd).toContain("timeout 30");
+    expect(cmd).not.toContain("timeout 60");
     expect(cmd).toContain("slice 1.2");
-    expect(cmd).toContain("execute");
     expect(cmd).not.toContain("txtnuname");
     expect(cmd.startsWith("bash -lc '")).toBe(true);
+  });
+});
+
+describe("slice 1.2.2 heavy-install skip", () => {
+  it("skips when package.json lists wrangler in devDependencies", () => {
+    expect(
+      planExecuteFromPackageJson({
+        name: "ways",
+        devDependencies: { wrangler: "^4.40.0", vitest: "^3.2.0" },
+      }),
+    ).toEqual({ action: "skip", reason: "heavy-install" });
+  });
+
+  it("skips next/vite/webpack/@cloudflare/vite-plugin", () => {
+    for (const name of ["next", "vite", "webpack", "@cloudflare/vite-plugin"]) {
+      expect(
+        planExecuteFromPackageJson({ dependencies: { [name]: "1.0.0" } }),
+      ).toEqual({ action: "skip", reason: "heavy-install" });
+    }
+  });
+
+  it("runs install-then-test for a light package.json", () => {
+    expect(
+      planExecuteFromPackageJson({
+        dependencies: { leftpad: "1.0.0" },
+      }),
+    ).toEqual({ action: "install-then-test" });
   });
 });
