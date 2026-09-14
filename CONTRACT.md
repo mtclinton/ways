@@ -28,3 +28,20 @@ Slice 1 still holds for `spec`-only runs. Slice 1.1 adds optional `gitUrl`.
 5. `RESULT.json` fields: `{ slice: 1.1, spec, gitUrl, clone, head, host, finishedAt }` where `spec`/`gitUrl`/`head` may be `null`, `clone` is `"ok"`|`"failed"`, and `host`/`finishedAt` have no trailing newlines.
 6. If clone fails: `phase === "failed"`, stderr included, RESULT still written when possible.
 7. No Artifacts binding required. No Flagship, wallets, or planner LLM.
+
+# Slice 1.2 contract
+
+Builds on Slice 1.1. After a successful clone, optionally run the repo's own tests.
+`spec` remains a label/note — never executed as shell.
+
+1. When `gitUrl` is present, run state `slice` is `1.2`.
+2. After `clone === "ok"`:
+   - If `/workspace/run/src/package.json` exists: `npm install --omit=dev` (60s timeout) then `npm test` (60s timeout) in that tree.
+   - Non-zero exit or timeout → `phase === "failed"` (clone may still be `"ok"`).
+   - If no `package.json`: skip execute, `phase === "done"`, `execute.status === "skipped"`.
+3. `RESULT.json` adds `execute`:
+   - `status`: `"ok"` | `"failed"` | `"skipped"` | `"timeout"`
+   - `exitCode`: number or `null`
+   - `stdout` / `stderr`: each truncated to 8KB
+4. Spec-only runs stay Slice 1 (no `execute` block required).
+5. Still no Artifacts, Flagship, wallets, or planner LLM.

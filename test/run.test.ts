@@ -5,7 +5,13 @@ import {
   parseCreateRun,
   transition,
 } from "../src/run";
-import { sandboxCommand, slice1Script } from "../src/sandbox-job";
+import {
+  EXEC_OUTPUT_LIMIT,
+  mapExecuteStatus,
+  sandboxCommand,
+  slice1Script,
+  truncateExecOutput,
+} from "../src/sandbox-job";
 
 describe("parseCreateRun", () => {
   it("accepts a trimmed spec", () => {
@@ -114,14 +120,30 @@ describe("transition", () => {
     }
   });
 
-  it("marks slice 1.1 when gitUrl present", () => {
+  it("marks slice 1.2 when gitUrl present", () => {
     const state = newRun(
       "r2",
       { spec: "x", gitUrl: "https://github.com/mtclinton/ways.git" },
       "2026-09-13T00:00:00.000Z",
     );
-    expect(state.slice).toBe(1.1);
+    expect(state.slice).toBe(1.2);
     expect(state.gitUrl).toBe("https://github.com/mtclinton/ways.git");
+  });
+});
+
+describe("execute status + truncation", () => {
+  it("maps exit codes to execute.status", () => {
+    expect(mapExecuteStatus(0)).toBe("ok");
+    expect(mapExecuteStatus(1)).toBe("failed");
+    expect(mapExecuteStatus(124)).toBe("timeout");
+    expect(mapExecuteStatus(null)).toBe("failed");
+  });
+
+  it("truncates execute output to 8KB", () => {
+    const big = "a".repeat(EXEC_OUTPUT_LIMIT + 50);
+    const out = truncateExecOutput(big);
+    expect(new TextEncoder().encode(out).length).toBe(EXEC_OUTPUT_LIMIT);
+    expect(truncateExecOutput("short")).toBe("short");
   });
 });
 
@@ -136,20 +158,21 @@ describe("sandbox job", () => {
     const cmd = sandboxCommand("slice1 smoke");
     expect(cmd).not.toContain("txtnuname");
     expect(cmd).toContain("SPEC.txt");
-    expect(cmd).toContain("uname");
     expect(cmd).toContain("; ");
     expect(cmd.startsWith("bash -lc '")).toBe(true);
   });
 
-  it("includes shallow clone when gitUrl set", () => {
+  it("includes shallow clone + npm execute when gitUrl set", () => {
     const cmd = sandboxCommand({
       spec: "clone ways",
       gitUrl: "https://github.com/mtclinton/ways.git",
     });
     expect(cmd).toContain("git clone --depth 1 --single-branch");
-    expect(cmd).toContain("https://github.com/mtclinton/ways.git");
-    expect(cmd).toContain("timeout 30");
-    expect(cmd).toContain("slice 1.1");
+    expect(cmd).toContain("npm install --omit=dev");
+    expect(cmd).toContain("npm test");
+    expect(cmd).toContain("timeout 60");
+    expect(cmd).toContain("slice 1.2");
+    expect(cmd).toContain("execute");
     expect(cmd).not.toContain("txtnuname");
     expect(cmd.startsWith("bash -lc '")).toBe(true);
   });

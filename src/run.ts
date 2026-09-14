@@ -1,7 +1,8 @@
 export const SLICE = 1 as const;
 export const SLICE_1_1 = 1.1 as const;
+export const SLICE_1_2 = 1.2 as const;
 
-export type Slice = typeof SLICE | typeof SLICE_1_1;
+export type Slice = typeof SLICE | typeof SLICE_1_1 | typeof SLICE_1_2;
 
 export type Phase = "queued" | "preparing" | "running" | "done" | "failed";
 
@@ -139,7 +140,7 @@ export function newRun(
     typeof input === "string"
       ? { spec: input, gitUrl: null }
       : { spec: input.spec, gitUrl: input.gitUrl };
-  const slice: Slice = parsed.gitUrl ? SLICE_1_1 : SLICE;
+  const slice: Slice = parsed.gitUrl ? SLICE_1_2 : SLICE;
   return {
     id,
     slice,
