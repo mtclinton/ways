@@ -530,14 +530,12 @@ describe("slice 1.8 git auth", () => {
     expect(isGithubHttpsUrl("not-a-url")).toBe(false);
   });
 
-  it("buildGithubAuthExtraHeader formats Bearer without logging real tokens", () => {
+  it("buildGithubAuthExtraHeader formats Basic x-access-token without logging real tokens", () => {
     const fake = "ghp_TEST_FAKE_TOKEN_FOR_UNIT_ONLY";
-    expect(buildGithubAuthExtraHeader(fake)).toBe(
-      `Authorization: Bearer ${fake}`,
-    );
-    expect(buildGithubAuthExtraHeader(fake).startsWith("Authorization: Bearer ")).toBe(
-      true,
-    );
+    const header = buildGithubAuthExtraHeader(fake);
+    expect(header.startsWith("Authorization: Basic ")).toBe(true);
+    const b64 = header.slice("Authorization: Basic ".length);
+    expect(atob(b64)).toBe(`x-access-token:${fake}`);
   });
 
   it("assertNoUserinfoInGitUrl / resultGitUrl reject credentials", () => {
@@ -574,11 +572,13 @@ describe("slice 1.8 git auth", () => {
       gitRef: null,
     });
     expect(script).toContain(`--arg gitUrl '${original}'`);
-    expect(script).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
+    expect(script).toContain("Authorization: Basic ${AUTH_B64}");
     expect(script).toContain('GITHUB_TOKEN:-');
     expect(script).toContain("http.extraHeader");
-    expect(script).not.toContain("x-access-token");
-    expect(script).not.toContain("@github.com");
+    expect(script).toContain('printf "%s" "x-access-token:${GITHUB_TOKEN}"');
+    // Must not embed credentials as URL userinfo
+    expect(script).not.toMatch(/https:\/\/[^'"\s]+@github\.com/);
+    expect(script).not.toContain("@github.com/");
     expect(script).toContain('sed -i "s|${GITHUB_TOKEN}|***|g"');
     // tokenized URL helper must not be used for RESULT
     expect(resultGitUrl(original)).toBe(original);
@@ -609,7 +609,7 @@ describe("slice 1.8 git auth", () => {
       gitRef: "main",
     });
     expect(script).toContain("git clone --depth 1 --branch");
-    expect(script).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
+    expect(script).toContain("Authorization: Basic ${AUTH_B64}");
     expect(script).toContain("fetch --depth 1 origin");
   });
 });

@@ -1,6 +1,8 @@
 /**
  * Slice 1.8 — GitHub HTTPS auth helpers.
  * Prefer Authorization header via GITHUB_TOKEN env; never put tokens in RESULT.gitUrl.
+ *
+ * Git HTTPS with gho_/PAT tokens needs Basic x-access-token (Bearer works for API only).
  */
 
 /** True when url is https and host is github.com (www. allowed). */
@@ -17,13 +19,15 @@ export function isGithubHttpsUrl(url: string): boolean {
 
 /**
  * Full http.extraHeader value for authenticated git clone.
- * Format: `Authorization: Bearer <token>` — tests use fake tokens only.
+ * Format: `Authorization: Basic <base64(x-access-token:TOKEN)>`
+ * Tests use fake tokens only — never log real tokens.
  */
 export function buildGithubAuthExtraHeader(token: string): string {
   if (!token || typeof token !== "string") {
     throw new Error("token required");
   }
-  return `Authorization: Bearer ${token}`;
+  const b64 = btoa(`x-access-token:${token}`);
+  return `Authorization: Basic ${b64}`;
 }
 
 /** Reject URLs that already embed credentials (userinfo). */

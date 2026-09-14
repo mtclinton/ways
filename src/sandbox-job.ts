@@ -77,9 +77,16 @@ export function planExecuteFromPackageJson(pkg: unknown): ExecutePlan {
 export const HEAVY_INSTALL_JQ =
   '(.dependencies // {}) + (.devDependencies // {}) | keys | any(. == "wrangler" or . == "next" or . == "vite" or . == "webpack" or . == "@cloudflare/vite-plugin")';
 
-/** git binary with optional Authorization Bearer header from $GITHUB_TOKEN. */
+/**
+ * git with Basic x-access-token header (Bearer fails for gho_ on git HTTPS).
+ * AUTH_B64 must be set in the retry block before these commands run.
+ */
 const GIT_AUTH =
-  'git -c "http.extraHeader=Authorization: Bearer ${GITHUB_TOKEN}"';
+  'git -c "http.extraHeader=Authorization: Basic ${AUTH_B64}"';
+
+/** Compute AUTH_B64 from GITHUB_TOKEN without embedding token in the job script. */
+const AUTH_B64_SETUP =
+  'AUTH_B64=$(printf "%s" "x-access-token:${GITHUB_TOKEN}" | base64 | tr -d "\\n")';
 
 /**
  * One clone attempt: anonymous (`git`) or authenticated (`GIT_AUTH`).
@@ -124,10 +131,18 @@ function buildCloneLines(gitUrl: string, gitRef: string | null): string[] {
   if (isGithubHttpsUrl(gitUrl)) {
     lines.push(
       'if [ "$CLONE_EC" -ne 0 ] && [ -n "${GITHUB_TOKEN:-}" ]; then rm -rf /workspace/run/src; ' +
+        AUTH_B64_SETUP +
+        "; " +
         cloneAttemptLines(gitUrl, gitRef, GIT_AUTH).join("; ") +
         "; fi",
     );
+    lines.push(
+      'if [ -z "${GITHUB_TOKEN:-}" ]; then echo "ways-auth: no-token" >> /workspace/run/CLONE_STDERR.txt; elif [ "$CLONE_EC" -ne 0 ]; then echo "ways-auth: token-present-still-failed" >> /workspace/run/CLONE_STDERR.txt; fi',
+    );
     lines.push(SCRUB_CLONE_STDERR);
+    lines.push(
+      'if [ -n "${AUTH_B64:-}" ] && [ -f /workspace/run/CLONE_STDERR.txt ]; then sed -i "s|${AUTH_B64}|***|g" /workspace/run/CLONE_STDERR.txt 2>/dev/null || true; fi',
+    );
   }
 
   lines.push("set -e");

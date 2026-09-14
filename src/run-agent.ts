@@ -467,8 +467,17 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
           timeout: 90_000,
         };
         // Pass token only via sandbox env — never embed in the command string.
-        if (this.env.GITHUB_TOKEN) {
-          execOpts.env = { GITHUB_TOKEN: this.env.GITHUB_TOKEN };
+        const githubToken = this.env.GITHUB_TOKEN;
+        if (githubToken) {
+          execOpts.env = { GITHUB_TOKEN: githubToken };
+          // Also set on the session so login shells inherit it reliably.
+          try {
+            await sandbox.setEnvVars({ GITHUB_TOKEN: githubToken });
+          } catch (err) {
+            console.warn("sandbox.setEnvVars(GITHUB_TOKEN) failed", err);
+          }
+        } else {
+          console.warn("GITHUB_TOKEN not configured on WaysEnv");
         }
         const exec = await sandbox.exec(
           sandboxCommand({
