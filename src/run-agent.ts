@@ -14,9 +14,9 @@ import { sandboxCommand } from "./sandbox-job";
 import { upsertRunIndexRemote } from "./run-index";
 import { previewAbsolutePath } from "./preview";
 import {
-  assertDeployOutputSafe,
   assertSafePreviewWorkerName,
-  parsePreviewWorkerUrl,
+  deployWorkerModuleViaApi,
+  parseWranglerJsonc,
   previewWorkerName,
   type WorkerPreview,
 } from "./worker-preview";
@@ -191,34 +191,28 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       });
     }
 
-    // Rewrite clone config name so banned names never appear in wrangler output.
-    const rewrite = await sandbox.exec(
-      `node -e ${JSON.stringify(
-        `const fs=require("fs");const path=require("path");const dir="/workspace/run/src";const name=${JSON.stringify(name)};for (const f of ["wrangler.jsonc","wrangler.toml"]) {const p=path.join(dir,f);if(!fs.existsSync(p))continue;let t=fs.readFileSync(p,"utf8");t=t.replace(/"name"\\s*:\\s*"[^"]*"/,'"name": "'+name+'"');t=t.replace(/^name\\s*=\\s*["'][^"']*["']/m,'name = "'+name+'"');fs.writeFileSync(p,t);}`,
-      )}`,
-      { timeout: 15_000 },
-    );
-    if ((rewrite.exitCode ?? 1) !== 0) {
+    // Prefer jsonc; toml only for presence (fixture uses jsonc).
+    const configPath = jsonc.exists
+      ? "/workspace/run/src/wrangler.jsonc"
+      : "/workspace/run/src/wrangler.toml";
+    const cfgFile = await sandbox.readFile(configPath, { encoding: "utf8" });
+    if (!cfgFile.success) {
       return this.withWorkerPreview(result, {
         status: "failed",
         name,
-        error: rewrite.stderr || "failed to rewrite wrangler name",
+        error: `failed to read ${configPath}`,
       });
     }
 
-    const deploy = await sandbox.exec(
-      `cd /workspace/run/src && npx --yes wrangler@4 deploy --name ${name}`,
-      {
-        timeout: 120_000,
-        env: {
-          CLOUDFLARE_API_TOKEN: token,
-          CLOUDFLARE_ACCOUNT_ID: accountId,
-        },
-      },
-    );
-    const out = `${deploy.stdout ?? ""}\n${deploy.stderr ?? ""}`;
+    let mainRel = "src/index.js";
+    let compatibilityDate = "2026-09-01";
     try {
-      assertDeployOutputSafe(out, name);
+      if (configPath.endsWith(".jsonc") || configPath.endsWith(".json")) {
+        const cfg = parseWranglerJsonc(cfgFile.content);
+        if (cfg.main) mainRel = cfg.main;
+        if (cfg.compatibility_date) compatibilityDate = cfg.compatibility_date;
+        // Never deploy cfg.name — only forced name.
+      }
     } catch (err) {
       return this.withWorkerPreview(result, {
         status: "failed",
@@ -226,25 +220,42 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
-    if ((deploy.exitCode ?? 1) !== 0) {
+
+    const mainAbs = `/workspace/run/src/${mainRel.replace(/^\.\//, "")}`;
+    const mainFile = await sandbox.readFile(mainAbs, { encoding: "utf8" });
+    if (!mainFile.success) {
       return this.withWorkerPreview(result, {
         status: "failed",
         name,
-        error: (deploy.stderr || deploy.stdout || `exit ${deploy.exitCode}`).slice(
-          0,
-          2000,
-        ),
+        error: `failed to read main module ${mainRel}`,
       });
     }
-    const url = parsePreviewWorkerUrl(out, name);
-    if (!url) {
+
+    // Module key is the basename path wrangler would use (keep nested path).
+    const mainModule = mainRel.replace(/^\.\//, "");
+
+    try {
+      const deployed = await deployWorkerModuleViaApi({
+        accountId,
+        token,
+        name,
+        mainModule,
+        moduleSource: mainFile.content,
+        compatibilityDate,
+        workersDevSubdomain: "max-977",
+      });
+      return this.withWorkerPreview(result, {
+        status: "ready",
+        name,
+        url: deployed.url,
+      });
+    } catch (err) {
       return this.withWorkerPreview(result, {
         status: "failed",
         name,
-        error: "deploy succeeded but workers.dev URL not found in output",
+        error: err instanceof Error ? err.message : String(err),
       });
     }
-    return this.withWorkerPreview(result, { status: "ready", name, url });
   }
 
   private async publishIndex(): Promise<void> {
@@ -296,28 +307,38 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       }
 
       const sandbox = getSandbox(this.env.Sandbox, this.state.id);
-      const exec = await sandbox.exec(
-        sandboxCommand({
-          spec: this.state.spec,
-          gitUrl: this.state.gitUrl,
-        }),
-      );
+      let result: ExecResult;
+      try {
+        const exec = await sandbox.exec(
+          sandboxCommand({
+            spec: this.state.spec,
+            gitUrl: this.state.gitUrl,
+          }),
+          { timeout: 90_000 },
+        );
 
-      let result = withParsedResultJson({
-        stdout: exec.stdout ?? "",
-        stderr: exec.stderr ?? "",
-        exitCode: exec.exitCode ?? (exec.success ? 0 : 1),
-      });
+        result = withParsedResultJson({
+          stdout: exec.stdout ?? "",
+          stderr: exec.stderr ?? "",
+          exitCode: exec.exitCode ?? (exec.success ? 0 : 1),
+        });
 
-      // Slice 1.5: forced-name worker preview deploy (never clone config name)
-      result = await this.maybeDeployWorkerPreview(sandbox, result);
+        // Slice 1.5: forced-name worker preview via Scripts API (never clone name)
+        result = await this.maybeDeployWorkerPreview(sandbox, result);
+      } finally {
+        try {
+          await sandbox.destroy();
+        } catch (err) {
+          console.warn("sandbox.destroy failed", err);
+        }
+      }
 
-      const phase = terminalPhaseForSandbox(this.state.gitUrl, result);
+      const phase = terminalPhaseForSandbox(this.state.gitUrl, result!);
       if (phase === "failed") {
         this.setState(
           transition(this.state, "failed", now(), "sandbox exited non-zero", {
-            result,
-            error: result.stderr || `exit ${result.exitCode}`,
+            result: result!,
+            error: result!.stderr || `exit ${result!.exitCode}`,
           }),
         );
         await this.publishIndex();
@@ -325,7 +346,9 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       }
 
       this.setState(
-        transition(this.state, "done", now(), "result written", { result }),
+        transition(this.state, "done", now(), "result written", {
+          result: result!,
+        }),
       );
       await this.publishIndex();
     } catch (err) {

@@ -336,6 +336,7 @@ import {
   assertDeployOutputSafe,
   assertSafePreviewWorkerName,
   parsePreviewWorkerUrl,
+  parseWranglerJsonc,
   previewWorkerName,
 } from "../src/worker-preview";
 
@@ -369,6 +370,20 @@ describe("slice 1.5 worker preview name", () => {
         "ways-p-7409a176",
       ),
     ).not.toThrow();
+  });
+
+  it("parses wrangler.jsonc main without using cloned name", () => {
+    const cfg = parseWranglerJsonc(`{
+  // comment
+  "name": "do-not-use-this-name",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01"
+}`);
+    expect(cfg.main).toBe("src/index.js");
+    expect(cfg.name).toBe("do-not-use-this-name");
+    // deploy must still use forced name, never cfg.name
+    expect(previewWorkerName("abcd1234-xxxx")).toBe("ways-p-abcd1234");
+    expect(() => assertSafePreviewWorkerName(cfg.name!)).toThrow(/banned/);
   });
 
   it("parses workers.dev URL for forced name", () => {
