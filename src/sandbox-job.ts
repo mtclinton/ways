@@ -64,8 +64,8 @@ export function slice1Script(input: SandboxJobInput | string): string {
       'FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ | tr -d "\\n")',
       `jq -n --argjson slice 1.2 --rawfile spec /workspace/run/SPEC.txt --arg gitUrl '${sq(gitUrl)}' --arg clone "$CLONE" --arg head "$HEAD" --arg host "$HOST" --arg finishedAt "$FINISHED" --arg execStatus "$EXEC_STATUS" --arg execEc "$EXEC_EC" --rawfile execOut /workspace/run/EXEC_STDOUT.txt --rawfile execErr /workspace/run/EXEC_STDERR.txt '{slice:$slice, spec:(if $spec=="" then null else $spec end), gitUrl:$gitUrl, clone:$clone, head:(if $head=="" then null else $head end), host:$host, finishedAt:$finishedAt, execute:{status:$execStatus, exitCode:(if $execEc=="" then null else ($execEc|tonumber) end), stdout:$execOut, stderr:$execErr}}' > /workspace/run/RESULT.json`,
       "cat /workspace/run/RESULT.json",
+      // Slice 1.2.1: clone failure fails the run; execute ok|failed|timeout|skipped → exit 0
       'if [ "$CLONE" != "ok" ]; then exit 1; fi',
-      'if [ "$EXEC_STATUS" = "failed" ] || [ "$EXEC_STATUS" = "timeout" ]; then exit 1; fi',
     );
   } else {
     lines.push(

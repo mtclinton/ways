@@ -3,7 +3,9 @@ import {
   ContractError,
   newRun,
   parseCreateRun,
+  terminalPhaseForSandbox,
   transition,
+  withParsedResultJson,
 } from "../src/run";
 import {
   EXEC_OUTPUT_LIMIT,
@@ -144,6 +146,50 @@ describe("execute status + truncation", () => {
     const out = truncateExecOutput(big);
     expect(new TextEncoder().encode(out).length).toBe(EXEC_OUTPUT_LIMIT);
     expect(truncateExecOutput("short")).toBe("short");
+  });
+});
+
+describe("slice 1.2.1 phase vs execute", () => {
+  it("clone ok + execute timeout → done", () => {
+    const result = withParsedResultJson({
+      stdout: JSON.stringify({
+        slice: 1.2,
+        clone: "ok",
+        execute: { status: "timeout", exitCode: 124 },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(result.json).toMatchObject({ clone: "ok" });
+    expect(
+      terminalPhaseForSandbox("https://github.com/mtclinton/ways.git", result),
+    ).toBe("done");
+  });
+
+  it("clone failed → failed", () => {
+    const result = withParsedResultJson({
+      stdout: JSON.stringify({
+        slice: 1.2,
+        clone: "failed",
+        execute: { status: "skipped", exitCode: null },
+      }),
+      stderr: "clone err",
+      exitCode: 1,
+    });
+    expect(
+      terminalPhaseForSandbox("https://github.com/mtclinton/ways.git", result),
+    ).toBe("failed");
+  });
+
+  it("gitUrl script exits only on clone failure", () => {
+    const script = slice1Script({
+      spec: "x",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+    });
+    expect(script).toContain('if [ "$CLONE" != "ok" ]; then exit 1; fi');
+    expect(script).not.toContain(
+      'if [ "$EXEC_STATUS" = "failed" ] || [ "$EXEC_STATUS" = "timeout" ]; then exit 1; fi',
+    );
   });
 });
 

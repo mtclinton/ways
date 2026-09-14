@@ -22,7 +22,34 @@ export type ExecResult = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /** Parsed RESULT.json from stdout when present (Slice 1.2.1). */
+  json?: unknown;
 };
+
+/** If stdout is JSON, attach it as result.json for clients. */
+export function withParsedResultJson(result: ExecResult): ExecResult {
+  const raw = result.stdout.trim();
+  if (!raw) return result;
+  try {
+    return { ...result, json: JSON.parse(raw) };
+  } catch {
+    return result;
+  }
+}
+
+/** Slice 1.2.1: gitUrl run is done when clone ok, regardless of execute.status. */
+export function terminalPhaseForSandbox(
+  gitUrl: string | null,
+  result: ExecResult,
+): "done" | "failed" {
+  const parsed = result.json;
+  if (gitUrl && parsed && typeof parsed === "object" && parsed !== null) {
+    const clone = (parsed as { clone?: string }).clone;
+    if (clone === "ok") return "done";
+    if (clone === "failed") return "failed";
+  }
+  return result.exitCode === 0 ? "done" : "failed";
+}
 
 export type RunState = {
   id: string;

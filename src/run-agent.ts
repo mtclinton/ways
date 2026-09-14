@@ -3,7 +3,9 @@ import { getSandbox, Sandbox } from "@cloudflare/sandbox";
 import {
   isTerminal,
   newRun,
+  terminalPhaseForSandbox,
   transition,
+  withParsedResultJson,
   type CreateRunInput,
   type RunState,
 } from "./run";
@@ -49,7 +51,6 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         spec: body.spec ?? null,
         gitUrl: body.gitUrl ?? null,
       };
-      // empty string spec from legacy callers → treat as null if gitUrl set
       if (input.spec === "") input.spec = null;
       const now = new Date().toISOString();
       this.setState(newRun(body.id, input, now));
@@ -61,7 +62,14 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
   }
 
   private publicState(): RunState {
-    return this.state;
+    const state = this.state;
+    if (state.result && state.result.json === undefined) {
+      return {
+        ...state,
+        result: withParsedResultJson(state.result),
+      };
+    }
+    return state;
   }
 
   private async execute(): Promise<void> {
@@ -98,13 +106,14 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         }),
       );
 
-      const result = {
+      const result = withParsedResultJson({
         stdout: exec.stdout ?? "",
         stderr: exec.stderr ?? "",
         exitCode: exec.exitCode ?? (exec.success ? 0 : 1),
-      };
+      });
 
-      if (result.exitCode !== 0) {
+      const phase = terminalPhaseForSandbox(this.state.gitUrl, result);
+      if (phase === "failed") {
         this.setState(
           transition(this.state, "failed", now(), "sandbox exited non-zero", {
             result,

@@ -37,11 +37,22 @@ Builds on Slice 1.1. After a successful clone, optionally run the repo's own tes
 1. When `gitUrl` is present, run state `slice` is `1.2`.
 2. After `clone === "ok"`:
    - If `/workspace/run/src/package.json` exists: `npm install --omit=dev` (60s timeout) then `npm test` (60s timeout) in that tree.
-   - Non-zero exit or timeout → `phase === "failed"` (clone may still be `"ok"`).
-   - If no `package.json`: skip execute, `phase === "done"`, `execute.status === "skipped"`.
+   - Non-zero exit or timeout → `execute.status` is `failed`|`timeout`; see Slice 1.2.1 for phase.
+   - If no `package.json`: skip execute, `execute.status === "skipped"`.
 3. `RESULT.json` adds `execute`:
    - `status`: `"ok"` | `"failed"` | `"skipped"` | `"timeout"`
    - `exitCode`: number or `null`
    - `stdout` / `stderr`: each truncated to 8KB
 4. Spec-only runs stay Slice 1 (no `execute` block required).
 5. Still no Artifacts, Flagship, wallets, or planner LLM.
+
+# Slice 1.2.1 contract
+
+Clarifies phase vs execute for gitUrl runs (Keel dogfood 2026-09-13).
+
+1. If `gitUrl` present and `clone` fails → `phase === "failed"`.
+2. If `clone === "ok"` and `execute.status` is `ok` | `failed` | `timeout` | `skipped` → `phase === "done"`.
+   `execute.status` stays accurate; a timed-out npm must not hide a good clone.
+3. Spec-only (Slice 1) unchanged: sandbox script failure still fails the run.
+4. `GET /api/runs/:id` may include `result.json` — parsed `RESULT.json` from `result.stdout` when stdout is JSON — so clients need not scrape.
+5. Execute stdout/stderr remain capped at 8KB; install/test timeouts remain 60s.
