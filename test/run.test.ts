@@ -334,7 +334,9 @@ describe("slice 1.4 preview", () => {
 
 import {
   assertDeployOutputSafe,
+  assertDeletablePreviewWorkerName,
   assertSafePreviewWorkerName,
+  isDeletablePreviewWorkerName,
   parsePreviewWorkerUrl,
   parseWranglerJsonc,
   previewWorkerName,
@@ -390,6 +392,33 @@ describe("slice 1.5 worker preview name", () => {
     const out = `Deployed ways-p-abcd1234\n  https://ways-p-abcd1234.max-977.workers.dev\n`;
     expect(parsePreviewWorkerUrl(out, "ways-p-abcd1234")).toBe(
       "https://ways-p-abcd1234.max-977.workers.dev",
+    );
+  });
+});
+
+
+describe("slice 1.6 deletable preview name", () => {
+  it("accepts ways-p-<8 lowercase hex>", () => {
+    expect(isDeletablePreviewWorkerName("ways-p-abcd1234")).toBe(true);
+    expect(assertDeletablePreviewWorkerName("ways-p-abcd1234")).toBe(
+      "ways-p-abcd1234",
+    );
+  });
+
+  it("rejects ways, do-not-use-this-name, ways-p-toolong, uppercase hex", () => {
+    expect(isDeletablePreviewWorkerName("ways")).toBe(false);
+    expect(isDeletablePreviewWorkerName("do-not-use-this-name")).toBe(false);
+    expect(isDeletablePreviewWorkerName("ways-p-toolong")).toBe(false);
+    expect(isDeletablePreviewWorkerName("ways-p-ABCD1234")).toBe(false);
+    expect(() => assertDeletablePreviewWorkerName("ways")).toThrow(/deletable/);
+    expect(() =>
+      assertDeletablePreviewWorkerName("do-not-use-this-name"),
+    ).toThrow(/deletable/);
+    expect(() => assertDeletablePreviewWorkerName("ways-p-toolong")).toThrow(
+      /deletable/,
+    );
+    expect(() => assertDeletablePreviewWorkerName("ways-p-ABCD1234")).toThrow(
+      /deletable/,
     );
   });
 });

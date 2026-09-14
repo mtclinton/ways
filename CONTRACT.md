@@ -111,3 +111,18 @@ After `clone === "ok"`:
 4. On success: `workerPreview = { status: "ready", name, url }` where `url` is the workers.dev URL wrangler printed.
 5. On deploy failure: `workerPreview = { status: "failed", error }`
 6. Static `/preview` from Slice 1.4 unchanged. No Artifacts / Flagship / wallets.
+
+
+# Slice 1.6 contract
+
+Preview Worker TTL and explicit delete. Builds on Slice 1.5.
+
+1. When `workerPreview.status === "ready"`, it also stores `createdAt` (ISO timestamp).
+2. After a successful Slice 1.5 deploy, schedule deletion of that preview script **1 hour** later (Durable Object Alarm on the RunAgent, via Agent `schedule` / `setAlarm`).
+3. `DELETE /api/runs/:id/preview` immediately deletes that run’s `ways-p-<8>` script only.
+   - **404** if there is no ready worker preview
+   - Never delete script `ways`
+   - Never delete names that do not match `^ways-p-[0-9a-f]{8}$`
+4. After delete (alarm or DELETE): `workerPreview.status = "expired"` (keep `name` / `url` / `createdAt`). GET `workerPreview.url` after delete should 404 (or Cloudflare error 1000+).
+5. Static `/preview` from Slice 1.4 unchanged: `GET` still serves HTML; `DELETE` is for the worker preview script only.
+6. No Artifacts / Flagship / wallets. Scripts API only (no wrangler-in-sandbox).

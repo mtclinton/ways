@@ -63,7 +63,13 @@ export function parseWranglerJsonc(raw: string): {
 }
 
 export type WorkerPreview =
-  | { status: "ready"; name: string; url: string }
+  | { status: "ready"; name: string; url: string; createdAt: string }
+  | {
+      status: "expired";
+      name?: string;
+      url?: string;
+      createdAt?: string;
+    }
   | { status: "failed"; name?: string; error: string }
   | { status: "skipped"; reason: "no-wrangler-config" };
 
@@ -141,4 +147,51 @@ export async function deployWorkerModuleViaApi(opts: {
 
   const url = `https://${name}.${opts.workersDevSubdomain}.workers.dev`;
   return { url, apiBody: putText };
+}
+
+export const PREVIEW_TTL_MS = 60 * 60 * 1000;
+
+const DELETABLE_PREVIEW_NAME = /^ways-p-[0-9a-f]{8}$/;
+
+export function isDeletablePreviewWorkerName(name: string): boolean {
+  return DELETABLE_PREVIEW_NAME.test(name);
+}
+
+export function assertDeletablePreviewWorkerName(name: string): string {
+  if (
+    name === "ways" ||
+    name === "do-not-use-this-name" ||
+    !isDeletablePreviewWorkerName(name)
+  ) {
+    throw new Error(`not a deletable preview worker name: ${name}`);
+  }
+  return name;
+}
+
+export async function deleteWorkerScriptViaApi(opts: {
+  accountId: string;
+  token: string;
+  name: string;
+}): Promise<{ ok: true; apiBody: string }> {
+  const name = assertDeletablePreviewWorkerName(opts.name);
+  const delUrl = `https://api.cloudflare.com/client/v4/accounts/${opts.accountId}/workers/scripts/${name}`;
+  const delRes = await fetch(delUrl, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${opts.token}` },
+  });
+  const delText = await delRes.text();
+  let delJson: { success?: boolean; errors?: unknown };
+  try {
+    delJson = JSON.parse(delText) as { success?: boolean; errors?: unknown };
+  } catch {
+    throw new Error(
+      `script delete non-JSON (${delRes.status}): ${delText.slice(0, 500)}`,
+    );
+  }
+  if (!delRes.ok || !delJson.success) {
+    throw new Error(
+      `script delete failed: ${JSON.stringify(delJson.errors ?? delText).slice(0, 1500)}`,
+    );
+  }
+  return { ok: true, apiBody: delText };
 }

@@ -15,8 +15,11 @@ import { upsertRunIndexRemote } from "./run-index";
 import { previewAbsolutePath } from "./preview";
 import {
   assertSafePreviewWorkerName,
+  deleteWorkerScriptViaApi,
   deployWorkerModuleViaApi,
+  isDeletablePreviewWorkerName,
   parseWranglerJsonc,
+  PREVIEW_TTL_MS,
   previewWorkerName,
   type WorkerPreview,
 } from "./worker-preview";
@@ -53,6 +56,10 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
 
     if (request.method === "GET" && url.pathname === "/preview") {
       return await this.handlePreview();
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/preview") {
+      return await this.handleDeleteWorkerPreview();
     }
 
     if (request.method === "POST" && url.pathname === "/start") {
@@ -123,6 +130,140 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       const message = err instanceof Error ? err.message : String(err);
       return Response.json({ error: message }, { status: 500 });
     }
+  }
+
+  /** Agent schedule callback — delete preview Worker after PREVIEW_TTL_MS. */
+  async expireWorkerPreview(): Promise<void> {
+    await this.expireReadyWorkerPreview("alarm");
+  }
+
+  private getWorkerPreviewFromState(): WorkerPreview | null {
+    const state = this.publicState();
+    const json =
+      state.result?.json && typeof state.result.json === "object"
+        ? (state.result.json as Record<string, unknown>)
+        : null;
+    if (!json || !json.workerPreview || typeof json.workerPreview !== "object") {
+      return null;
+    }
+    return json.workerPreview as WorkerPreview;
+  }
+
+  private setWorkerPreviewOnState(workerPreview: WorkerPreview): void {
+    const state = this.publicState();
+    if (!state.result) {
+      this.setState({
+        ...state,
+        result: this.withWorkerPreview(
+          { stdout: "", stderr: "", exitCode: 0 },
+          workerPreview,
+        ),
+      });
+      return;
+    }
+    this.setState({
+      ...state,
+      result: this.withWorkerPreview(state.result, workerPreview),
+    });
+  }
+
+  private async cancelPreviewExpireSchedules(): Promise<void> {
+    try {
+      const schedules = this.getSchedules({});
+      for (const s of schedules) {
+        if (s.callback === "expireWorkerPreview") {
+          await this.cancelSchedule(s.id);
+        }
+      }
+    } catch (err) {
+      console.warn("cancelPreviewExpireSchedules failed", err);
+    }
+    try {
+      await this.ctx.storage.deleteAlarm();
+    } catch (err) {
+      console.warn("deleteAlarm failed", err);
+    }
+  }
+
+  private async expireReadyWorkerPreview(
+    _reason: "alarm" | "delete",
+  ): Promise<{ deleted: boolean; name?: string }> {
+    const wp = this.getWorkerPreviewFromState();
+    if (!wp || wp.status !== "ready" || !wp.name) {
+      return { deleted: false };
+    }
+    if (!isDeletablePreviewWorkerName(wp.name)) {
+      return { deleted: false, name: wp.name };
+    }
+    const token = this.env.CLOUDFLARE_API_TOKEN;
+    const accountId = this.env.CLOUDFLARE_ACCOUNT_ID;
+    if (token && accountId) {
+      try {
+        await deleteWorkerScriptViaApi({
+          accountId,
+          token,
+          name: wp.name,
+        });
+      } catch (err) {
+        console.warn("preview script delete failed", err);
+        // Still mark expired so we do not retry forever on gone scripts.
+      }
+    }
+    this.setWorkerPreviewOnState({
+      status: "expired",
+      name: wp.name,
+      url: wp.url,
+      createdAt: wp.createdAt,
+    });
+    return { deleted: true, name: wp.name };
+  }
+
+  async handleDeleteWorkerPreview(): Promise<Response> {
+    const wp = this.getWorkerPreviewFromState();
+    if (!wp || wp.status !== "ready" || !wp.name) {
+      return Response.json(
+        { error: "no ready worker preview" },
+        { status: 404 },
+      );
+    }
+    if (!isDeletablePreviewWorkerName(wp.name)) {
+      return Response.json(
+        { error: "worker preview name not deletable" },
+        { status: 404 },
+      );
+    }
+    const token = this.env.CLOUDFLARE_API_TOKEN;
+    const accountId = this.env.CLOUDFLARE_ACCOUNT_ID;
+    if (!token || !accountId) {
+      return Response.json(
+        { error: "missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID secret" },
+        { status: 500 },
+      );
+    }
+    try {
+      await deleteWorkerScriptViaApi({
+        accountId,
+        token,
+        name: wp.name,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: message }, { status: 500 });
+    }
+    await this.cancelPreviewExpireSchedules();
+    this.setWorkerPreviewOnState({
+      status: "expired",
+      name: wp.name,
+      url: wp.url,
+      createdAt: wp.createdAt,
+    });
+    return Response.json(
+      {
+        ok: true,
+        workerPreview: this.getWorkerPreviewFromState(),
+      },
+      { status: 200 },
+    );
   }
 
   private publicState(): RunState {
@@ -244,10 +385,19 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         compatibilityDate,
         workersDevSubdomain: "max-977",
       });
+      const createdAt = new Date().toISOString();
+      // Agent schedule API → DO setAlarm; callback expireWorkerPreview runs in Agent.alarm.
+      await this.schedule(
+        PREVIEW_TTL_MS / 1000,
+        "expireWorkerPreview" as keyof this,
+      );
+      // Contract: also setAlarm for 1h (Agent._scheduleNextAlarm already did; reinforce).
+      await this.ctx.storage.setAlarm(Date.now() + PREVIEW_TTL_MS);
       return this.withWorkerPreview(result, {
         status: "ready",
         name,
         url: deployed.url,
+        createdAt,
       });
     } catch (err) {
       return this.withWorkerPreview(result, {
