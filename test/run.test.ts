@@ -304,8 +304,12 @@ describe("run index", () => {
 
 
 import {
+  applyPreviewStoreDecision,
+  decidePreviewStore,
+  PREVIEW_STORE_CAP_BYTES,
   previewAbsolutePath,
   resolvePreviewFromExists,
+  utf8ByteLength,
 } from "../src/preview";
 
 describe("slice 1.4 preview", () => {
@@ -334,6 +338,68 @@ describe("slice 1.4 preview", () => {
     expect(previewAbsolutePath("../etc/passwd")).toBeNull();
     expect(previewAbsolutePath("public/../index.html")).toBeNull();
     expect(previewAbsolutePath("/index.html")).toBeNull();
+  });
+});
+
+describe("slice 1.4.1 preview persist", () => {
+  it("decidePreviewStore stores at and under 256KB, skips above", () => {
+    expect(PREVIEW_STORE_CAP_BYTES).toBe(256 * 1024);
+    expect(decidePreviewStore(0)).toBe("store");
+    expect(decidePreviewStore(1)).toBe("store");
+    expect(decidePreviewStore(PREVIEW_STORE_CAP_BYTES)).toBe("store");
+    expect(decidePreviewStore(PREVIEW_STORE_CAP_BYTES + 1)).toBe("too-large");
+  });
+
+  it("too-large updates ready → skipped reason", () => {
+    expect(
+      applyPreviewStoreDecision(
+        { status: "ready", path: "public/index.html" },
+        "too-large",
+      ),
+    ).toEqual({ status: "skipped", reason: "too-large" });
+    expect(
+      applyPreviewStoreDecision(
+        { status: "ready", path: "index.html" },
+        "store",
+      ),
+    ).toEqual({ status: "ready", path: "index.html" });
+  });
+
+  it("store-then-serve after fake destroy (ready → stored bytes)", () => {
+    // Simulate capture before destroy: map ready path → stored HTML, then
+    // serve from the map (no live sandbox).
+    const store = new Map<string, string>();
+    const html = "<!doctype html><html><body>ways preview</body></html>";
+    const abs = previewAbsolutePath("public/index.html");
+    expect(abs).toBe("/workspace/run/src/public/index.html");
+
+    const decision = decidePreviewStore(utf8ByteLength(html));
+    expect(decision).toBe("store");
+    const preview = applyPreviewStoreDecision(
+      { status: "ready", path: "public/index.html" },
+      decision,
+    );
+    expect(preview.status).toBe("ready");
+    if (decision === "store") store.set("previewHtml", html);
+
+    // fake destroy — store is the only source
+    const served = store.get("previewHtml");
+    expect(served).toBe(html);
+    expect(served!.slice(0, 15)).toBe("<!doctype html>");
+  });
+
+  it("too-large does not store; GET would 404", () => {
+    const store = new Map<string, string>();
+    const big = "x".repeat(PREVIEW_STORE_CAP_BYTES + 1);
+    const decision = decidePreviewStore(utf8ByteLength(big));
+    expect(decision).toBe("too-large");
+    const preview = applyPreviewStoreDecision(
+      { status: "ready", path: "index.html" },
+      decision,
+    );
+    expect(preview).toEqual({ status: "skipped", reason: "too-large" });
+    // do not put
+    expect(store.get("previewHtml")).toBeUndefined();
   });
 });
 

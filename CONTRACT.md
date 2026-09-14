@@ -99,6 +99,20 @@ After `clone === "ok"`:
 5. Path traversal banned: only `public/index.html` and `index.html`
 6. No Artifacts / Flagship / wallets / Temporary Accounts
 
+# Slice 1.4.1 contract
+
+Persist static preview HTML so GET /preview works after sandbox.destroy (Keel demo 2026-09-14).
+
+Builds on Slice 1.4. Allowlist unchanged (`public/index.html`, `index.html`).
+
+1. When preview is ready (`public/index.html` or `index.html`), read the allowlisted file **once during the run** (via sandbox `readFile`) **before** `sandbox.destroy()`.
+2. Cap **256KB** (UTF-8 bytes). If larger → do **not** store; set `preview = { status: "skipped", reason: "too-large" }` in RESULT.
+3. Store the HTML on the RunAgent Durable Object (`previewHtml` in DO storage preferred so Agent state broadcasts stay small).
+4. `GET /api/runs/:id/preview` serves that **stored** HTML as **200** `text/html`. Do **not** depend on a live sandbox.
+5. If no stored HTML → **404** preview skipped (same shape as Slice 1.4 skipped).
+6. **409** still applies if run is not terminal or `clone` is not `ok`.
+7. Static path allowlist / traversal ban unchanged. No Artifacts / Flagship / wallets.
+
 # Slice 1.5 contract
 
 Preview-deploy a cloned Worker under a **forced** name. Never use the name in the clone’s wrangler config.

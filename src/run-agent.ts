@@ -12,7 +12,13 @@ import {
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
 import { upsertRunIndexRemote } from "./run-index";
-import { previewAbsolutePath } from "./preview";
+import {
+  decidePreviewStore,
+  PREVIEW_HTML_STORAGE_KEY,
+  previewAbsolutePath,
+  utf8ByteLength,
+  type PreviewInfo,
+} from "./preview";
 import {
   assertSafePreviewWorkerName,
   deleteWorkerScriptViaApi,
@@ -113,27 +119,21 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         { status: 404 },
       );
     }
-    const abs = previewAbsolutePath(preview.path);
-    if (!abs) {
-      return Response.json({ error: "path not allowlisted" }, { status: 400 });
+    // Slice 1.4.1: serve HTML captured into DO storage before sandbox.destroy.
+    const html = await this.ctx.storage.get<string>(PREVIEW_HTML_STORAGE_KEY);
+    if (html === undefined || html === null || html === "") {
+      return Response.json(
+        { error: "preview skipped", reason: "no-stored-html" },
+        { status: 404 },
+      );
     }
-    try {
-      const sandbox = getSandbox(this.env.Sandbox, state.id);
-      const file = await sandbox.readFile(abs, { encoding: "utf8" });
-      if (!file.success) {
-        return Response.json({ error: "read failed" }, { status: 404 });
-      }
-      return new Response(file.content, {
-        status: 200,
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "cache-control": "no-store",
-        },
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return Response.json({ error: message }, { status: 500 });
-    }
+    return new Response(html, {
+      status: 200,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      },
+    });
   }
 
   /** Agent schedule callback — delete preview Worker after PREVIEW_TTL_MS. */
@@ -295,6 +295,72 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       json,
       stdout: JSON.stringify(json, null, 2),
     };
+  }
+
+  /**
+   * Slice 1.4.1 — read allowlisted static HTML once while sandbox is live,
+   * store on DO (≤256KB). Must run before sandbox.destroy().
+   */
+  private async maybeCaptureStaticPreview(
+    sandbox: ReturnType<typeof getSandbox>,
+    result: ExecResult,
+  ): Promise<ExecResult> {
+    const json =
+      result.json && typeof result.json === "object" && result.json !== null
+        ? { ...(result.json as Record<string, unknown>) }
+        : null;
+    if (!json || json.clone !== "ok") return result;
+
+    const previewRaw = json.preview;
+    if (
+      !previewRaw ||
+      typeof previewRaw !== "object" ||
+      previewRaw === null ||
+      (previewRaw as { status?: string }).status !== "ready" ||
+      typeof (previewRaw as { path?: string }).path !== "string"
+    ) {
+      return result;
+    }
+
+    const path = (previewRaw as { path: string }).path;
+    const abs = previewAbsolutePath(path);
+    if (!abs) {
+      return result;
+    }
+
+    try {
+      const file = await sandbox.readFile(abs, { encoding: "utf8" });
+      if (!file.success || typeof file.content !== "string") {
+        console.warn("static preview read failed", abs);
+        return result;
+      }
+      const bytes =
+        typeof file.size === "number" && Number.isFinite(file.size)
+          ? file.size
+          : utf8ByteLength(file.content);
+      const decision = decidePreviewStore(bytes);
+
+      let previewInfo: PreviewInfo;
+      if (decision === "too-large") {
+        previewInfo = { status: "skipped", reason: "too-large" };
+        await this.ctx.storage.delete(PREVIEW_HTML_STORAGE_KEY);
+      } else if (path === "public/index.html" || path === "index.html") {
+        previewInfo = { status: "ready", path };
+        await this.ctx.storage.put(PREVIEW_HTML_STORAGE_KEY, file.content);
+      } else {
+        return result;
+      }
+
+      const updated = { ...json, preview: previewInfo };
+      return {
+        ...result,
+        json: updated,
+        stdout: JSON.stringify(updated, null, 2),
+      };
+    } catch (err) {
+      console.warn("maybeCaptureStaticPreview failed", err);
+      return result;
+    }
   }
 
   private async maybeDeployWorkerPreview(
@@ -496,6 +562,8 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
 
         // Slice 1.5: forced-name worker preview via Scripts API (never clone name)
         result = await this.maybeDeployWorkerPreview(sandbox, result);
+        // Slice 1.4.1: persist static HTML before sandbox.destroy()
+        result = await this.maybeCaptureStaticPreview(sandbox, result);
       } finally {
         try {
           await sandbox.destroy();
