@@ -100,11 +100,13 @@
   <body>
     <main>
       <h1>ways</h1>
-      <p class="sub">Slice 1.4: recent runs + static HTML preview from the sandbox (no customer deploy).</p>
+      <p class="sub">Slice 1.7: optional gitRef (branch / tag / sha) on clone.</p>
       <label for="spec">spec</label>
       <textarea id="spec">clone ways and run its tests</textarea>
       <label for="gitUrl">gitUrl (https, optional)</label>
       <input id="gitUrl" type="url" placeholder="https://github.com/mtclinton/ways-fixture.git" value="" />
+      <label for="gitRef">gitRef (branch / tag / sha, optional)</label>
+      <input id="gitRef" type="text" placeholder="main" value="" />
       <div><button id="go" type="button">Start run</button></div>
 
       <h2>Recent runs</h2>
@@ -121,6 +123,7 @@
     <script type="module">
       const specEl = document.getElementById("spec");
       const gitUrlEl = document.getElementById("gitUrl");
+      const gitRefEl = document.getElementById("gitRef");
       const go = document.getElementById("go");
       const recentEl = document.getElementById("recent");
       const status = document.getElementById("status");
@@ -143,6 +146,8 @@
           const body = { spec: specEl.value };
           const gitUrl = gitUrlEl.value.trim();
           if (gitUrl) body.gitUrl = gitUrl;
+          const gitRef = gitRefEl.value.trim();
+          if (gitRef) body.gitRef = gitRef;
           const res = await fetch("/api/runs", {
             method: "POST",
             headers: { "content-type": "application/json" },

@@ -21,6 +21,7 @@ export const HEAVY_INSTALL_PACKAGES = [
 export type SandboxJobInput = {
   spec: string | null;
   gitUrl: string | null;
+  gitRef: string | null;
 };
 
 function sq(value: string): string {
@@ -77,9 +78,12 @@ export const HEAVY_INSTALL_JQ =
 /** Build the inner bash script (newline-separated). */
 export function slice1Script(input: SandboxJobInput | string): string {
   const job: SandboxJobInput =
-    typeof input === "string" ? { spec: input, gitUrl: null } : input;
+    typeof input === "string"
+      ? { spec: input, gitUrl: null, gitRef: null }
+      : input;
   const spec = job.spec ?? "";
   const gitUrl = job.gitUrl;
+  const gitRef = job.gitRef;
 
   const lines: string[] = [
     "set -eu",
@@ -126,6 +130,29 @@ export function slice1Script(input: SandboxJobInput | string): string {
       'fi',
     ].join(" ");
 
+    // Slice 1.7: optional gitRef — try --branch first; fall back to fetch+checkout (sha).
+    const cloneLines: string[] = gitRef
+      ? [
+          `printf '%s' '${sq(gitRef)}' > /workspace/run/GITREF.txt`,
+          "set +e",
+          `timeout 30 git clone --depth 1 --branch '${sq(gitRef)}' '${sq(gitUrl)}' /workspace/run/src > /workspace/run/CLONE_STDERR.txt 2>&1`,
+          "CLONE_EC=$?",
+          'if [ "$CLONE_EC" -ne 0 ]; then rm -rf /workspace/run/src; timeout 30 git clone --depth 1 --single-branch \'' +
+            sq(gitUrl) +
+            '\' /workspace/run/src > /workspace/run/CLONE_STDERR.txt 2>&1; CLONE_EC=$?; if [ "$CLONE_EC" -eq 0 ]; then git -C /workspace/run/src fetch --depth 1 origin \'' +
+            sq(gitRef) +
+            '\' > /workspace/run/CLONE_STDERR.txt 2>&1; FETCH_EC=$?; if [ "$FETCH_EC" -eq 0 ]; then git -C /workspace/run/src checkout \'' +
+            sq(gitRef) +
+            '\' > /workspace/run/CLONE_STDERR.txt 2>&1 || git -C /workspace/run/src checkout FETCH_HEAD > /workspace/run/CLONE_STDERR.txt 2>&1; CLONE_EC=$?; else CLONE_EC=$FETCH_EC; fi; fi; fi',
+          "set -e",
+        ]
+      : [
+          "set +e",
+          `timeout 30 git clone --depth 1 --single-branch '${sq(gitUrl)}' /workspace/run/src > /workspace/run/CLONE_STDERR.txt 2>&1`,
+          "CLONE_EC=$?",
+          "set -e",
+        ];
+
     lines.push(
       `printf '%s' '${sq(gitUrl)}' > /workspace/run/GITURL.txt`,
       "CLONE=failed",
@@ -136,10 +163,7 @@ export function slice1Script(input: SandboxJobInput | string): string {
       "PREVIEW_STATUS=skipped",
       "PREVIEW_PATH=",
       "PREVIEW_REASON=no-static-index",
-      "set +e",
-      `timeout 30 git clone --depth 1 --single-branch '${sq(gitUrl)}' /workspace/run/src > /workspace/run/CLONE_STDERR.txt 2>&1`,
-      "CLONE_EC=$?",
-      "set -e",
+      ...cloneLines,
       'if [ "$CLONE_EC" -eq 0 ]; then CLONE=ok; HEAD=$(git -C /workspace/run/src rev-parse HEAD | tr -d "\\n"); else cat /workspace/run/CLONE_STDERR.txt >&2 || true; fi',
       executeBlock,
       'if [ "$CLONE" = "ok" ]; then if [ -f /workspace/run/src/public/index.html ]; then PREVIEW_STATUS=ready; PREVIEW_PATH=public/index.html; PREVIEW_REASON=; elif [ -f /workspace/run/src/index.html ]; then PREVIEW_STATUS=ready; PREVIEW_PATH=index.html; PREVIEW_REASON=; fi; fi',
@@ -147,7 +171,7 @@ export function slice1Script(input: SandboxJobInput | string): string {
       "head -c 8192 /workspace/run/EXEC_STDERR.raw > /workspace/run/EXEC_STDERR.txt || :",
       'HOST=$(uname -a | tr -d "\\n")',
       'FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ | tr -d "\\n")',
-      `jq -n --argjson slice 1.2 --rawfile spec /workspace/run/SPEC.txt --arg gitUrl '${sq(gitUrl)}' --arg clone "$CLONE" --arg head "$HEAD" --arg host "$HOST" --arg finishedAt "$FINISHED" --arg execStatus "$EXEC_STATUS" --arg execEc "$EXEC_EC" --arg execReason "$EXEC_REASON" --arg previewStatus "$PREVIEW_STATUS" --arg previewPath "$PREVIEW_PATH" --arg previewReason "$PREVIEW_REASON" --rawfile execOut /workspace/run/EXEC_STDOUT.txt --rawfile execErr /workspace/run/EXEC_STDERR.txt '{slice:$slice, spec:(if $spec=="" then null else $spec end), gitUrl:$gitUrl, clone:$clone, head:(if $head=="" then null else $head end), host:$host, finishedAt:$finishedAt, execute:({status:$execStatus, exitCode:(if $execEc=="" then null else ($execEc|tonumber) end), stdout:$execOut, stderr:$execErr} + (if $execReason=="" then {} else {reason:$execReason} end)), preview:(if $previewStatus=="ready" then {status:"ready", path:$previewPath} else {status:"skipped", reason:$previewReason} end)}' > /workspace/run/RESULT.json`,
+      `jq -n --argjson slice 1.2 --rawfile spec /workspace/run/SPEC.txt --arg gitUrl '${sq(gitUrl)}' --arg gitRef '${sq(gitRef ?? "")}' --arg clone "$CLONE" --arg head "$HEAD" --arg host "$HOST" --arg finishedAt "$FINISHED" --arg execStatus "$EXEC_STATUS" --arg execEc "$EXEC_EC" --arg execReason "$EXEC_REASON" --arg previewStatus "$PREVIEW_STATUS" --arg previewPath "$PREVIEW_PATH" --arg previewReason "$PREVIEW_REASON" --rawfile execOut /workspace/run/EXEC_STDOUT.txt --rawfile execErr /workspace/run/EXEC_STDERR.txt '{slice:$slice, spec:(if $spec=="" then null else $spec end), gitUrl:$gitUrl, gitRef:(if $gitRef=="" then null else $gitRef end), clone:$clone, head:(if $head=="" then null else $head end), host:$host, finishedAt:$finishedAt, execute:({status:$execStatus, exitCode:(if $execEc=="" then null else ($execEc|tonumber) end), stdout:$execOut, stderr:$execErr} + (if $execReason=="" then {} else {reason:$execReason} end)), preview:(if $previewStatus=="ready" then {status:"ready", path:$previewPath} else {status:"skipped", reason:$previewReason} end)}' > /workspace/run/RESULT.json`,
       "cat /workspace/run/RESULT.json",
       // Slice 1.2.1: clone failure fails the run; execute* → exit 0
       'if [ "$CLONE" != "ok" ]; then exit 1; fi',

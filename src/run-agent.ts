@@ -43,7 +43,7 @@ type WaysEnv = {
 export class RunAgent extends Agent<WaysEnv, RunState> {
   override initialState: RunState = newRun(
     "pending",
-    { spec: null, gitUrl: null },
+    { spec: null, gitUrl: null, gitRef: null },
     new Date(0).toISOString(),
   );
 
@@ -70,10 +70,12 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         id: string;
         spec: string | null;
         gitUrl?: string | null;
+        gitRef?: string | null;
       };
       const input: CreateRunInput = {
         spec: body.spec ?? null,
         gitUrl: body.gitUrl ?? null,
+        gitRef: body.gitRef ?? null,
       };
       if (input.spec === "") input.spec = null;
       const now = new Date().toISOString();
@@ -463,6 +465,7 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
           sandboxCommand({
             spec: this.state.spec,
             gitUrl: this.state.gitUrl,
+            gitRef: this.state.gitRef,
           }),
           { timeout: 90_000 },
         );

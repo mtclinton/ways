@@ -56,6 +56,7 @@ export type RunState = {
   slice: Slice;
   spec: string | null;
   gitUrl: string | null;
+  gitRef: string | null;
   phase: Phase;
   events: RunEvent[];
   createdAt: string;
@@ -68,6 +69,7 @@ export type RunState = {
 export type CreateRunInput = {
   spec: string | null;
   gitUrl: string | null;
+  gitRef: string | null;
 };
 
 export class ContractError extends Error {
@@ -108,11 +110,37 @@ export function parseCreateRun(body: unknown): CreateRunInput {
     gitUrl = parseGitUrl(rec.gitUrl);
   }
 
+  let gitRef: string | null = null;
+  if ("gitRef" in rec && rec.gitRef !== undefined && rec.gitRef !== null) {
+    gitRef = parseGitRef(rec.gitRef);
+  }
+
   if (spec === null && gitUrl === null) {
     throw new ContractError(400, "at least one of spec or gitUrl is required");
   }
 
-  return { spec, gitUrl };
+  return { spec, gitUrl, gitRef };
+}
+
+
+const GIT_REF_RE = /^[A-Za-z0-9._\/-]{1,200}$/;
+
+/** Validate optional gitRef (branch, tag, or sha). Rejects traversal-ish tokens. */
+export function parseGitRef(raw: unknown): string {
+  if (typeof raw !== "string") {
+    throw new ContractError(422, "gitRef must be a string");
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new ContractError(422, "gitRef must be non-empty");
+  }
+  if (/\s/.test(trimmed) || trimmed.includes("..") || trimmed.startsWith("-")) {
+    throw new ContractError(422, "gitRef rejected");
+  }
+  if (!GIT_REF_RE.test(trimmed)) {
+    throw new ContractError(422, "gitRef rejected");
+  }
+  return trimmed;
 }
 
 export function parseGitUrl(raw: unknown): string {
@@ -165,14 +193,19 @@ export function newRun(
 ): RunState {
   const parsed: CreateRunInput =
     typeof input === "string"
-      ? { spec: input, gitUrl: null }
-      : { spec: input.spec, gitUrl: input.gitUrl };
+      ? { spec: input, gitUrl: null, gitRef: null }
+      : {
+          spec: input.spec,
+          gitUrl: input.gitUrl,
+          gitRef: input.gitRef ?? null,
+        };
   const slice: Slice = parsed.gitUrl ? SLICE_1_2 : SLICE;
   return {
     id,
     slice,
     spec: parsed.spec,
     gitUrl: parsed.gitUrl,
+    gitRef: parsed.gitRef,
     phase: "queued",
     events: [
       {

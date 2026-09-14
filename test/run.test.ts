@@ -3,6 +3,7 @@ import {
   ContractError,
   newRun,
   parseCreateRun,
+  parseGitRef,
   terminalPhaseForSandbox,
   transition,
   withParsedResultJson,
@@ -21,6 +22,7 @@ describe("parseCreateRun", () => {
     expect(parseCreateRun({ spec: "  prove 2+2  " })).toEqual({
       spec: "prove 2+2",
       gitUrl: null,
+      gitRef: null,
     });
   });
 
@@ -33,6 +35,7 @@ describe("parseCreateRun", () => {
     ).toEqual({
       spec: "clone ways",
       gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: null,
     });
   });
 
@@ -42,6 +45,7 @@ describe("parseCreateRun", () => {
     ).toEqual({
       spec: null,
       gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: null,
     });
   });
 
@@ -126,7 +130,7 @@ describe("transition", () => {
   it("marks slice 1.2 when gitUrl present", () => {
     const state = newRun(
       "r2",
-      { spec: "x", gitUrl: "https://github.com/mtclinton/ways.git" },
+      { spec: "x", gitUrl: "https://github.com/mtclinton/ways.git", gitRef: null },
       "2026-09-13T00:00:00.000Z",
     );
     expect(state.slice).toBe(1.2);
@@ -186,6 +190,7 @@ describe("slice 1.2.1 phase vs execute", () => {
     const script = slice1Script({
       spec: "x",
       gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: null,
     });
     expect(script).toContain('if [ "$CLONE" != "ok" ]; then exit 1; fi');
     expect(script).not.toContain(
@@ -213,6 +218,7 @@ describe("sandbox job", () => {
     const cmd = sandboxCommand({
       spec: "clone ways",
       gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: null,
     });
     expect(cmd).toContain("git clone --depth 1 --single-branch");
     expect(cmd).toContain("heavy-install");
@@ -420,5 +426,86 @@ describe("slice 1.6 deletable preview name", () => {
     expect(() => assertDeletablePreviewWorkerName("ways-p-ABCD1234")).toThrow(
       /deletable/,
     );
+  });
+});
+
+
+describe("slice 1.7 gitRef", () => {
+  it("accepts main, 40-hex, and branch names", () => {
+    expect(parseGitRef("main")).toBe("main");
+    expect(parseGitRef("slice1-no-artifacts")).toBe("slice1-no-artifacts");
+    const sha = "d31b843947369d6368074ad98197c874f102bbb7";
+    expect(parseGitRef(sha)).toBe(sha);
+    expect(
+      parseCreateRun({
+        spec: "x",
+        gitUrl: "https://github.com/mtclinton/ways.git",
+        gitRef: "main",
+      }),
+    ).toEqual({
+      spec: "x",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: "main",
+    });
+  });
+
+  it("rejects ../, foo bar, empty, leading -, and ..", () => {
+    for (const bad of ["../", "../evil", "foo bar", "", "  ", "-", "-main", ".."]) {
+      try {
+        parseGitRef(bad);
+        throw new Error(`expected throw for ${JSON.stringify(bad)}`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(ContractError);
+        expect((err as ContractError).status).toBe(422);
+      }
+    }
+    try {
+      parseCreateRun({
+        spec: "x",
+        gitUrl: "https://github.com/mtclinton/ways-fixture.git",
+        gitRef: "../evil",
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContractError);
+      expect((err as ContractError).status).toBe(422);
+    }
+  });
+
+  it("clones with --branch when gitRef set and includes gitRef in RESULT jq", () => {
+    const script = slice1Script({
+      spec: "x",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: "slice1-no-artifacts",
+    });
+    expect(script).toContain("git clone --depth 1 --branch");
+    expect(script).toContain("slice1-no-artifacts");
+    expect(script).toContain("fetch --depth 1 origin");
+    expect(script).toContain("--arg gitRef");
+    expect(script).toContain("gitRef:(if $gitRef==\"\" then null else $gitRef end)");
+  });
+
+  it("omits --branch when gitRef null; still emits gitRef null in RESULT", () => {
+    const script = slice1Script({
+      spec: "x",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: null,
+    });
+    expect(script).toContain("git clone --depth 1 --single-branch");
+    expect(script).not.toContain("git clone --depth 1 --branch");
+    expect(script).toContain("--arg gitRef");
+  });
+
+  it("stores gitRef on RunState", () => {
+    const state = newRun(
+      "r3",
+      {
+        spec: "x",
+        gitUrl: "https://github.com/mtclinton/ways.git",
+        gitRef: "main",
+      },
+      "2026-09-14T00:00:00.000Z",
+    );
+    expect(state.gitRef).toBe("main");
   });
 });

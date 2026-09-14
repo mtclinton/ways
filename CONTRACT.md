@@ -126,3 +126,14 @@ Preview Worker TTL and explicit delete. Builds on Slice 1.5.
 4. After delete (alarm or DELETE): `workerPreview.status = "expired"` (keep `name` / `url` / `createdAt`). GET `workerPreview.url` after delete should 404 (or Cloudflare error 1000+).
 5. Static `/preview` from Slice 1.4 unchanged: `GET` still serves HTML; `DELETE` is for the worker preview script only.
 6. No Artifacts / Flagship / wallets. Scripts API only (no wrangler-in-sandbox).
+
+# Slice 1.7 contract
+
+Optional `gitRef` on create — clone a specific branch, tag, or commit.
+
+1. `POST /api/runs` may include `gitRef`: branch name like `main`, 40-hex sha, or tag-like token matching `^[A-Za-z0-9._/-]{1,200}$`.
+2. Reject refs with `..`, leading `-`, or spaces (and empty). Return **422** via existing `ContractError` path.
+3. When `gitRef` is set: clone with `git clone --depth 1 --branch <ref>` into `/workspace/run/src`; if that fails (e.g. sha), fall back to clone default then `git fetch --depth 1 origin <ref> && git checkout <ref>` (or `FETCH_HEAD`).
+4. `RESULT.json` includes `gitRef` (string or null) and `head` must be the checked-out commit.
+5. When `gitRef` omitted: unchanged default-branch shallow clone; `gitRef` null in RESULT.
+6. Still no Artifacts / Flagship / wallets. Scripts API only for previews.

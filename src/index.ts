@@ -37,6 +37,7 @@ export default {
             id,
             spec: input.spec,
             gitUrl: input.gitUrl,
+            gitRef: input.gitRef,
           }),
         });
         const res = await agent.fetch(start);
@@ -46,6 +47,7 @@ export default {
           createdAt: string;
           spec: string | null;
           gitUrl: string | null;
+          gitRef: string | null;
         };
         if (res.ok || res.status === 202) {
           const entry: RunIndexEntry = {
