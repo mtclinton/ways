@@ -14,6 +14,8 @@ type Env = {
   RunAgent: DurableObjectNamespace<RunAgent>;
   RunIndex: DurableObjectNamespace;
   ASSETS: Fetcher;
+  /** Slice 1.8 — optional; consumed by RunAgent for private GitHub clones. */
+  GITHUB_TOKEN?: string;
 };
 
 export default {

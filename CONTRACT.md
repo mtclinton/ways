@@ -141,3 +141,15 @@ Optional `gitRef` on create — clone a specific branch, tag, or commit.
 # Slice 1.7.1 contract
 
 Operator UI: optional `gitRef` input. POST `{ spec, gitUrl, gitRef }` omitting empty fields.
+
+# Slice 1.8 contract
+
+Private GitHub HTTPS clone via optional `GITHUB_TOKEN` Worker secret.
+
+1. Public https `gitUrl` still clones with no token (anonymous).
+2. If anonymous clone fails with auth and `GITHUB_TOKEN` is set and the URL host is `github.com`, retry clone using authenticated https (`git -c http.extraHeader="Authorization: Bearer $GITHUB_TOKEN"`). Do **not** persist a tokenized URL.
+3. `RESULT.gitUrl` stays the original https URL with **no userinfo** (no `x-access-token`, no embedded token).
+4. Clone fail → `phase === "failed"` (existing Slice 1.2.1 rule).
+5. If no token and the repo is private → clone failed (expected).
+6. Token is passed into the sandbox only via `sandbox.exec(..., { env: { GITHUB_TOKEN } })`, never embedded in the job command string or RESULT/gitUrl fields.
+7. Still no Artifacts / Flagship / wallets required for this slice.

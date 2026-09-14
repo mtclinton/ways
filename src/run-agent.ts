@@ -32,6 +32,8 @@ type WaysEnv = {
   RunIndex: DurableObjectNamespace;
   CLOUDFLARE_API_TOKEN?: string;
   CLOUDFLARE_ACCOUNT_ID?: string;
+  /** Slice 1.8 — optional GitHub token for private https clones (never logged). */
+  GITHUB_TOKEN?: string;
   ARTIFACTS?: {
     create: (
       name: string,
@@ -461,13 +463,20 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       const sandbox = getSandbox(this.env.Sandbox, this.state.id);
       let result: ExecResult;
       try {
+        const execOpts: { timeout: number; env?: Record<string, string> } = {
+          timeout: 90_000,
+        };
+        // Pass token only via sandbox env — never embed in the command string.
+        if (this.env.GITHUB_TOKEN) {
+          execOpts.env = { GITHUB_TOKEN: this.env.GITHUB_TOKEN };
+        }
         const exec = await sandbox.exec(
           sandboxCommand({
             spec: this.state.spec,
             gitUrl: this.state.gitUrl,
             gitRef: this.state.gitRef,
           }),
-          { timeout: 90_000 },
+          execOpts,
         );
 
         result = withParsedResultJson({

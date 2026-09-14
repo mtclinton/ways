@@ -509,3 +509,107 @@ describe("slice 1.7 gitRef", () => {
     expect(state.gitRef).toBe("main");
   });
 });
+
+
+import {
+  assertNoUserinfoInGitUrl,
+  buildGithubAuthExtraHeader,
+  isGithubHttpsUrl,
+  resultGitUrl,
+  scrubTokenFromText,
+} from "../src/git-auth";
+
+describe("slice 1.8 git auth", () => {
+  it("isGithubHttpsUrl accepts github.com https only", () => {
+    expect(isGithubHttpsUrl("https://github.com/mtclinton/ways.git")).toBe(true);
+    expect(isGithubHttpsUrl("https://www.github.com/mtclinton/ways.git")).toBe(
+      true,
+    );
+    expect(isGithubHttpsUrl("https://gitlab.com/mtclinton/ways.git")).toBe(false);
+    expect(isGithubHttpsUrl("http://github.com/mtclinton/ways.git")).toBe(false);
+    expect(isGithubHttpsUrl("not-a-url")).toBe(false);
+  });
+
+  it("buildGithubAuthExtraHeader formats Bearer without logging real tokens", () => {
+    const fake = "ghp_TEST_FAKE_TOKEN_FOR_UNIT_ONLY";
+    expect(buildGithubAuthExtraHeader(fake)).toBe(
+      `Authorization: Bearer ${fake}`,
+    );
+    expect(buildGithubAuthExtraHeader(fake).startsWith("Authorization: Bearer ")).toBe(
+      true,
+    );
+  });
+
+  it("assertNoUserinfoInGitUrl / resultGitUrl reject credentials", () => {
+    expect(() =>
+      assertNoUserinfoInGitUrl(
+        "https://x-access-token:gho_fake@github.com/mtclinton/ways.git",
+      ),
+    ).toThrow(/userinfo/);
+    expect(() =>
+      resultGitUrl("https://user:pass@github.com/mtclinton/ways.git"),
+    ).toThrow(/userinfo/);
+    expect(resultGitUrl("https://github.com/mtclinton/ways.git")).toBe(
+      "https://github.com/mtclinton/ways.git",
+    );
+  });
+
+  it("posted gitUrl with userinfo still rejected by parseGitUrl", () => {
+    try {
+      parseCreateRun({
+        gitUrl: "https://x-access-token:gho_fake@github.com/mtclinton/ways.git",
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContractError);
+      expect((err as ContractError).status).toBe(422);
+    }
+  });
+
+  it("RESULT jq uses original URL; script has auth retry for github, not tokenized URL", () => {
+    const original = "https://github.com/mtclinton/ways-private-fixture.git";
+    const script = slice1Script({
+      spec: "1.8",
+      gitUrl: original,
+      gitRef: null,
+    });
+    expect(script).toContain(`--arg gitUrl '${original}'`);
+    expect(script).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
+    expect(script).toContain('GITHUB_TOKEN:-');
+    expect(script).toContain("http.extraHeader");
+    expect(script).not.toContain("x-access-token");
+    expect(script).not.toContain("@github.com");
+    expect(script).toContain('sed -i "s|${GITHUB_TOKEN}|***|g"');
+    // tokenized URL helper must not be used for RESULT
+    expect(resultGitUrl(original)).toBe(original);
+  });
+
+  it("non-github https URL has no GITHUB_TOKEN auth retry", () => {
+    const script = slice1Script({
+      spec: "x",
+      gitUrl: "https://example.com/org/repo.git",
+      gitRef: null,
+    });
+    expect(script).not.toContain("GITHUB_TOKEN");
+    expect(script).not.toContain("http.extraHeader");
+    expect(script).toContain("git clone --depth 1 --single-branch");
+  });
+
+  it("scrubTokenFromText redacts token", () => {
+    expect(scrubTokenFromText("err ghp_ABC xyz ghp_ABC", "ghp_ABC")).toBe(
+      "err *** xyz ***",
+    );
+    expect(scrubTokenFromText("clean", undefined)).toBe("clean");
+  });
+
+  it("gitRef-aware clone still includes auth retry on github", () => {
+    const script = slice1Script({
+      spec: "x",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+      gitRef: "main",
+    });
+    expect(script).toContain("git clone --depth 1 --branch");
+    expect(script).toContain("Authorization: Bearer ${GITHUB_TOKEN}");
+    expect(script).toContain("fetch --depth 1 origin");
+  });
+});
