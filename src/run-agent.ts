@@ -7,11 +7,19 @@ import {
   transition,
   withParsedResultJson,
   type CreateRunInput,
+  type ExecResult,
   type RunState,
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
 import { upsertRunIndexRemote } from "./run-index";
 import { previewAbsolutePath } from "./preview";
+import {
+  assertDeployOutputSafe,
+  assertSafePreviewWorkerName,
+  parsePreviewWorkerUrl,
+  previewWorkerName,
+  type WorkerPreview,
+} from "./worker-preview";
 
 export { Sandbox };
 
@@ -19,6 +27,8 @@ type WaysEnv = {
   RunAgent: DurableObjectNamespace;
   Sandbox: DurableObjectNamespace<Sandbox>;
   RunIndex: DurableObjectNamespace;
+  CLOUDFLARE_API_TOKEN?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
   ARTIFACTS?: {
     create: (
       name: string,
@@ -126,6 +136,117 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
     return state;
   }
 
+  private withWorkerPreview(
+    result: ExecResult,
+    workerPreview: WorkerPreview,
+  ): ExecResult {
+    const base =
+      result.json && typeof result.json === "object" && result.json !== null
+        ? { ...(result.json as Record<string, unknown>) }
+        : {};
+    const json = { ...base, workerPreview };
+    return {
+      ...result,
+      json,
+      stdout: JSON.stringify(json, null, 2),
+    };
+  }
+
+  private async maybeDeployWorkerPreview(
+    sandbox: ReturnType<typeof getSandbox>,
+    result: ExecResult,
+  ): Promise<ExecResult> {
+    const json =
+      result.json && typeof result.json === "object" && result.json !== null
+        ? (result.json as Record<string, unknown>)
+        : null;
+    if (!json || json.clone !== "ok") return result;
+
+    const jsonc = await sandbox.exists("/workspace/run/src/wrangler.jsonc");
+    const toml = await sandbox.exists("/workspace/run/src/wrangler.toml");
+    if (!jsonc.exists && !toml.exists) {
+      return this.withWorkerPreview(result, {
+        status: "skipped",
+        reason: "no-wrangler-config",
+      });
+    }
+
+    let name: string;
+    try {
+      name = assertSafePreviewWorkerName(previewWorkerName(this.state.id));
+    } catch (err) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const token = this.env.CLOUDFLARE_API_TOKEN;
+    const accountId = this.env.CLOUDFLARE_ACCOUNT_ID;
+    if (!token || !accountId) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        name,
+        error: "missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID secret",
+      });
+    }
+
+    // Rewrite clone config name so banned names never appear in wrangler output.
+    const rewrite = await sandbox.exec(
+      `node -e ${JSON.stringify(
+        `const fs=require("fs");const path=require("path");const dir="/workspace/run/src";const name=${JSON.stringify(name)};for (const f of ["wrangler.jsonc","wrangler.toml"]) {const p=path.join(dir,f);if(!fs.existsSync(p))continue;let t=fs.readFileSync(p,"utf8");t=t.replace(/"name"\\s*:\\s*"[^"]*"/,'"name": "'+name+'"');t=t.replace(/^name\\s*=\\s*["'][^"']*["']/m,'name = "'+name+'"');fs.writeFileSync(p,t);}`,
+      )}`,
+      { timeout: 15_000 },
+    );
+    if ((rewrite.exitCode ?? 1) !== 0) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        name,
+        error: rewrite.stderr || "failed to rewrite wrangler name",
+      });
+    }
+
+    const deploy = await sandbox.exec(
+      `cd /workspace/run/src && npx --yes wrangler@4 deploy --name ${name}`,
+      {
+        timeout: 120_000,
+        env: {
+          CLOUDFLARE_API_TOKEN: token,
+          CLOUDFLARE_ACCOUNT_ID: accountId,
+        },
+      },
+    );
+    const out = `${deploy.stdout ?? ""}\n${deploy.stderr ?? ""}`;
+    try {
+      assertDeployOutputSafe(out, name);
+    } catch (err) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if ((deploy.exitCode ?? 1) !== 0) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        name,
+        error: (deploy.stderr || deploy.stdout || `exit ${deploy.exitCode}`).slice(
+          0,
+          2000,
+        ),
+      });
+    }
+    const url = parsePreviewWorkerUrl(out, name);
+    if (!url) {
+      return this.withWorkerPreview(result, {
+        status: "failed",
+        name,
+        error: "deploy succeeded but workers.dev URL not found in output",
+      });
+    }
+    return this.withWorkerPreview(result, { status: "ready", name, url });
+  }
+
   private async publishIndex(): Promise<void> {
     try {
       const state = this.publicState();
@@ -182,11 +303,14 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         }),
       );
 
-      const result = withParsedResultJson({
+      let result = withParsedResultJson({
         stdout: exec.stdout ?? "",
         stderr: exec.stderr ?? "",
         exitCode: exec.exitCode ?? (exec.success ? 0 : 1),
       });
+
+      // Slice 1.5: forced-name worker preview deploy (never clone config name)
+      result = await this.maybeDeployWorkerPreview(sandbox, result);
 
       const phase = terminalPhaseForSandbox(this.state.gitUrl, result);
       if (phase === "failed") {

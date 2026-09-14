@@ -98,3 +98,16 @@ After `clone === "ok"`:
    - **404** if preview was skipped
 5. Path traversal banned: only `public/index.html` and `index.html`
 6. No Artifacts / Flagship / wallets / Temporary Accounts
+
+# Slice 1.5 contract
+
+Preview-deploy a cloned Worker under a **forced** name. Never use the name in the clone’s wrangler config.
+
+After `clone === "ok"`:
+
+1. If neither `wrangler.jsonc` nor `wrangler.toml` exists at the clone root → `workerPreview = { status: "skipped", reason: "no-wrangler-config" }`
+2. Else deploy with forced script name `ways-p-<first8 of run id>` (lowercase hex from the UUID prefix).
+3. Never deploy script name `ways` or `do-not-use-this-name`. Rewrite the clone config name before deploy; pass `--name` as well.
+4. On success: `workerPreview = { status: "ready", name, url }` where `url` is the workers.dev URL wrangler printed.
+5. On deploy failure: `workerPreview = { status: "failed", error }`
+6. Static `/preview` from Slice 1.4 unchanged. No Artifacts / Flagship / wallets.

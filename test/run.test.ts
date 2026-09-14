@@ -330,3 +330,51 @@ describe("slice 1.4 preview", () => {
     expect(previewAbsolutePath("/index.html")).toBeNull();
   });
 });
+
+
+import {
+  assertDeployOutputSafe,
+  assertSafePreviewWorkerName,
+  parsePreviewWorkerUrl,
+  previewWorkerName,
+} from "../src/worker-preview";
+
+describe("slice 1.5 worker preview name", () => {
+  it("derives ways-p-<first8>", () => {
+    expect(previewWorkerName("7409a176-238d-4515-8e00-d446cf7ca095")).toBe(
+      "ways-p-7409a176",
+    );
+  });
+
+  it("rejects banned names ways and do-not-use-this-name", () => {
+    expect(() => assertSafePreviewWorkerName("ways")).toThrow(/banned/);
+    expect(() => assertSafePreviewWorkerName("do-not-use-this-name")).toThrow(
+      /banned/,
+    );
+    expect(assertSafePreviewWorkerName("ways-p-7409a176")).toBe(
+      "ways-p-7409a176",
+    );
+  });
+
+  it("fails deploy output that mentions banned names", () => {
+    expect(() =>
+      assertDeployOutputSafe("Uploaded do-not-use-this-name", "ways-p-abcd1234"),
+    ).toThrow(/banned/);
+    expect(() =>
+      assertDeployOutputSafe("Deployed ways triggers", "ways-p-abcd1234"),
+    ).toThrow(/banned/);
+    expect(() =>
+      assertDeployOutputSafe(
+        "Deployed ways-p-7409a176\n  https://ways-p-7409a176.max-977.workers.dev",
+        "ways-p-7409a176",
+      ),
+    ).not.toThrow();
+  });
+
+  it("parses workers.dev URL for forced name", () => {
+    const out = `Deployed ways-p-abcd1234\n  https://ways-p-abcd1234.max-977.workers.dev\n`;
+    expect(parsePreviewWorkerUrl(out, "ways-p-abcd1234")).toBe(
+      "https://ways-p-abcd1234.max-977.workers.dev",
+    );
+  });
+});

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ways · slice 1.4</title>
+    <title>ways · slice 1.5</title>
     <style>
       :root {
         color-scheme: dark;
@@ -239,6 +239,9 @@
             : null,
           resultJson?.preview
             ? `preview: ${resultJson.preview.status}${resultJson.preview.path ? " · " + resultJson.preview.path : ""}${resultJson.preview.reason ? " (" + resultJson.preview.reason + ")" : ""}`
+            : null,
+          resultJson?.workerPreview
+            ? `workerPreview: ${resultJson.workerPreview.status}${resultJson.workerPreview.url ? " · " + resultJson.workerPreview.url : ""}${resultJson.workerPreview.reason ? " (" + resultJson.workerPreview.reason + ")" : ""}${resultJson.workerPreview.error ? " · " + resultJson.workerPreview.error : ""}`
             : null,
         ]
           .filter(Boolean)
