@@ -10,8 +10,8 @@ import {
   type RunState,
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
-import { previewAbsolutePath } from "./preview";
 import { upsertRunIndexRemote } from "./run-index";
+import { previewAbsolutePath } from "./preview";
 
 export { Sandbox };
 
@@ -42,7 +42,7 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
     }
 
     if (request.method === "GET" && url.pathname === "/preview") {
-      return this.servePreview();
+      return await this.handlePreview();
     }
 
     if (request.method === "POST" && url.pathname === "/start") {
@@ -66,6 +66,53 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
     }
 
     return new Response("not found", { status: 404 });
+  }
+
+  async handlePreview(): Promise<Response> {
+    const state = this.publicState();
+    if (!isTerminal(state.phase)) {
+      return Response.json({ error: "run not terminal" }, { status: 409 });
+    }
+    const resultJson =
+      state.result?.json && typeof state.result.json === "object"
+        ? (state.result.json as Record<string, unknown>)
+        : null;
+    if (!resultJson || resultJson.clone !== "ok") {
+      return Response.json({ error: "clone not ok" }, { status: 409 });
+    }
+    const preview = resultJson.preview as
+      | { status?: string; path?: string; reason?: string }
+      | undefined;
+    if (!preview || preview.status !== "ready" || !preview.path) {
+      return Response.json(
+        {
+          error: "preview skipped",
+          reason: preview?.reason ?? "no-static-index",
+        },
+        { status: 404 },
+      );
+    }
+    const abs = previewAbsolutePath(preview.path);
+    if (!abs) {
+      return Response.json({ error: "path not allowlisted" }, { status: 400 });
+    }
+    try {
+      const sandbox = getSandbox(this.env.Sandbox, state.id);
+      const file = await sandbox.readFile(abs, { encoding: "utf8" });
+      if (!file.success) {
+        return Response.json({ error: "read failed" }, { status: 404 });
+      }
+      return new Response(file.content, {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return Response.json({ error: message }, { status: 500 });
+    }
   }
 
   private publicState(): RunState {
