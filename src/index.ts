@@ -60,6 +60,14 @@ export default {
         return res;
       }
 
+      const previewMatch = url.pathname.match(
+        /^\/api\/runs\/([0-9a-f-]{36})\/preview$/i,
+      );
+      if (request.method === "GET" && previewMatch?.[1]) {
+        const agent = await getAgentByName(env.RunAgent, previewMatch[1]);
+        return agent.fetch(new Request(new URL("/preview", request.url)));
+      }
+
       const match = url.pathname.match(/^\/api\/runs\/([0-9a-f-]{36})$/i);
       if (request.method === "GET" && match?.[1]) {
         const agent = await getAgentByName(env.RunAgent, match[1]);

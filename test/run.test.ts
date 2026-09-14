@@ -295,3 +295,38 @@ describe("run index", () => {
     expect(runs[0].id).toBe("id-54");
   });
 });
+
+
+import {
+  previewAbsolutePath,
+  resolvePreviewFromExists,
+} from "../src/preview";
+
+describe("slice 1.4 preview", () => {
+  it("maps public/index.html ahead of root index.html", () => {
+    expect(resolvePreviewFromExists(true, true)).toEqual({
+      status: "ready",
+      path: "public/index.html",
+    });
+    expect(resolvePreviewFromExists(false, true)).toEqual({
+      status: "ready",
+      path: "index.html",
+    });
+    expect(resolvePreviewFromExists(false, false)).toEqual({
+      status: "skipped",
+      reason: "no-static-index",
+    });
+  });
+
+  it("allowlists only the two paths and bans traversal", () => {
+    expect(previewAbsolutePath("public/index.html")).toBe(
+      "/workspace/run/src/public/index.html",
+    );
+    expect(previewAbsolutePath("index.html")).toBe(
+      "/workspace/run/src/index.html",
+    );
+    expect(previewAbsolutePath("../etc/passwd")).toBeNull();
+    expect(previewAbsolutePath("public/../index.html")).toBeNull();
+    expect(previewAbsolutePath("/index.html")).toBeNull();
+  });
+});

@@ -10,6 +10,7 @@ import {
   type RunState,
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
+import { previewAbsolutePath } from "./preview";
 import { upsertRunIndexRemote } from "./run-index";
 
 export { Sandbox };
@@ -38,6 +39,10 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
 
     if (request.method === "GET" && url.pathname === "/") {
       return Response.json(this.publicState());
+    }
+
+    if (request.method === "GET" && url.pathname === "/preview") {
+      return this.servePreview();
     }
 
     if (request.method === "POST" && url.pathname === "/start") {

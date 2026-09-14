@@ -82,3 +82,19 @@ Run index — operators can list recent runs without already knowing an id.
 3. A new `POST /api/runs` must appear in the list after it is accepted.
 4. Index updates again when a run reaches a terminal phase (`done` | `failed`), including `execute` when present.
 5. `GET /api/runs/:id` unchanged (full run state).
+
+# Slice 1.4 contract
+
+Static HTML preview from the same sandbox. Do **not** `wrangler deploy` customer repos.
+
+After `clone === "ok"`:
+
+1. If `/workspace/run/src/public/index.html` exists → `preview = { status: "ready", path: "public/index.html" }`
+2. Else if `/workspace/run/src/index.html` exists → `preview = { status: "ready", path: "index.html" }`
+3. Else → `preview = { status: "skipped", reason: "no-static-index" }`
+4. `GET /api/runs/:id/preview`
+   - **200** `text/html` serving that file via sandbox `readFile` (same sandbox as the run)
+   - **409** if run is not terminal or `clone` is not `ok`
+   - **404** if preview was skipped
+5. Path traversal banned: only `public/index.html` and `index.html`
+6. No Artifacts / Flagship / wallets / Temporary Accounts

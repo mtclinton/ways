@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ways · slice 1.3</title>
+    <title>ways · slice 1.4</title>
     <style>
       :root {
         color-scheme: dark;
@@ -100,7 +100,7 @@
   <body>
     <main>
       <h1>ways</h1>
-      <p class="sub">Slice 1.3: list recent runs. Spec is a label; optional https gitUrl shallow-clones.</p>
+      <p class="sub">Slice 1.4: recent runs + static HTML preview from the sandbox (no customer deploy).</p>
       <label for="spec">spec</label>
       <textarea id="spec">clone ways and run its tests</textarea>
       <label for="gitUrl">gitUrl (https, optional)</label>
@@ -113,6 +113,7 @@
       <section id="status" hidden>
         <p id="phase" class="phase"></p>
         <div id="meta" class="meta"></div>
+        <p id="previewLink" hidden><a href="#" target="_blank" rel="noopener">Preview</a></p>
         <ol id="events"></ol>
         <pre id="out"></pre>
       </section>
@@ -125,6 +126,7 @@
       const status = document.getElementById("status");
       const phaseEl = document.getElementById("phase");
       const metaEl = document.getElementById("meta");
+      const previewLink = document.getElementById("previewLink");
       const eventsEl = document.getElementById("events");
       const outEl = document.getElementById("out");
 
@@ -235,9 +237,19 @@
           execute
             ? `execute: ${execute.status}${execute.reason ? " (" + execute.reason + ")" : ""} (exit ${execute.exitCode})`
             : null,
+          resultJson?.preview
+            ? `preview: ${resultJson.preview.status}${resultJson.preview.path ? " · " + resultJson.preview.path : ""}${resultJson.preview.reason ? " (" + resultJson.preview.reason + ")" : ""}`
+            : null,
         ]
           .filter(Boolean)
           .join("\n");
+        const a = previewLink.querySelector("a");
+        if (resultJson?.preview?.status === "ready") {
+          a.href = `/api/runs/${run.id}/preview`;
+          previewLink.hidden = false;
+        } else {
+          previewLink.hidden = true;
+        }
         eventsEl.replaceChildren();
         for (const ev of run.events ?? []) {
           const li = document.createElement("li");
