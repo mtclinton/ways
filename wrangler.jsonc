@@ -24,13 +24,18 @@
   "durable_objects": {
     "bindings": [
       { "name": "RunAgent", "class_name": "RunAgent" },
-      { "name": "Sandbox", "class_name": "Sandbox" }
+      { "name": "Sandbox", "class_name": "Sandbox" },
+      { "name": "RunIndex", "class_name": "RunIndex" }
     ]
   },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["RunAgent", "Sandbox"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["RunIndex"]
     }
   ]
 }

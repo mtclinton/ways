@@ -72,3 +72,13 @@ After `clone === "ok"`:
 5. Phase rule from 1.2.1 unchanged: `clone === "ok"` ⇒ `phase === "done"`.
 6. `RESULT.json` `execute` may include optional `reason` when skipped.
 7. `spec` is never executed as shell.
+
+# Slice 1.3 contract
+
+Run index — operators can list recent runs without already knowing an id.
+
+1. `GET /api/runs` returns `{ "runs": [ { id, phase, createdAt, spec?, gitUrl?, execute? } ] }` newest first (by `createdAt`).
+2. Cap **50** entries. Do not scan all run Durable Objects; use a dedicated index store.
+3. A new `POST /api/runs` must appear in the list after it is accepted.
+4. Index updates again when a run reaches a terminal phase (`done` | `failed`), including `execute` when present.
+5. `GET /api/runs/:id` unchanged (full run state).

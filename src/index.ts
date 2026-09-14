@@ -1,11 +1,18 @@
 import { getAgentByName } from "agents";
-import { ContractError, parseCreateRun } from "./run";
+import { ContractError, parseCreateRun, type Phase } from "./run";
 import { RunAgent } from "./run-agent";
+import {
+  listRunIndexRemote,
+  upsertRunIndexRemote,
+  type RunIndexEntry,
+} from "./run-index";
 
 export { RunAgent, Sandbox } from "./run-agent";
+export { RunIndex } from "./run-index-do";
 
 type Env = {
   RunAgent: DurableObjectNamespace<RunAgent>;
+  RunIndex: DurableObjectNamespace;
   ASSETS: Fetcher;
 };
 
@@ -14,6 +21,11 @@ export default {
     const url = new URL(request.url);
 
     try {
+      if (request.method === "GET" && url.pathname === "/api/runs") {
+        const runs = await listRunIndexRemote(env);
+        return json({ runs }, 200);
+      }
+
       if (request.method === "POST" && url.pathname === "/api/runs") {
         const input = parseCreateRun(await request.json());
         const id = crypto.randomUUID();
@@ -27,7 +39,25 @@ export default {
             gitUrl: input.gitUrl,
           }),
         });
-        return agent.fetch(start);
+        const res = await agent.fetch(start);
+        const body = (await res.clone().json()) as {
+          id: string;
+          phase: Phase;
+          createdAt: string;
+          spec: string | null;
+          gitUrl: string | null;
+        };
+        if (res.ok || res.status === 202) {
+          const entry: RunIndexEntry = {
+            id: body.id ?? id,
+            phase: body.phase ?? "queued",
+            createdAt: body.createdAt ?? new Date().toISOString(),
+            spec: body.spec ?? input.spec,
+            gitUrl: body.gitUrl ?? input.gitUrl,
+          };
+          await upsertRunIndexRemote(env, entry);
+        }
+        return res;
       }
 
       const match = url.pathname.match(/^\/api\/runs\/([0-9a-f-]{36})$/i);

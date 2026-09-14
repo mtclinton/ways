@@ -10,12 +10,14 @@ import {
   type RunState,
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
+import { upsertRunIndexRemote } from "./run-index";
 
 export { Sandbox };
 
 type WaysEnv = {
   RunAgent: DurableObjectNamespace;
   Sandbox: DurableObjectNamespace<Sandbox>;
+  RunIndex: DurableObjectNamespace;
   ARTIFACTS?: {
     create: (
       name: string,
@@ -72,14 +74,36 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
     return state;
   }
 
+  private async publishIndex(): Promise<void> {
+    try {
+      const state = this.publicState();
+      const execute =
+        state.result?.json &&
+        typeof state.result.json === "object" &&
+        state.result.json !== null &&
+        "execute" in (state.result.json as object)
+          ? (state.result.json as { execute?: unknown }).execute
+          : undefined;
+      await upsertRunIndexRemote(this.env, {
+        id: state.id,
+        phase: state.phase,
+        createdAt: state.createdAt,
+        spec: state.spec,
+        gitUrl: state.gitUrl,
+        ...(execute !== undefined ? { execute } : {}),
+      });
+    } catch (err) {
+      console.warn("run-index publish failed", err);
+    }
+  }
+
   private async execute(): Promise<void> {
-    const id = this.state.id;
     try {
       this.setState(
         transition(this.state, "preparing", now(), "opening workspace"),
       );
 
-      const artifact = await this.openArtifact(id);
+      const artifact = await this.openArtifact(this.state.id);
       if (artifact) {
         this.setState(
           transition(this.state, "running", now(), "sandbox started", {
@@ -98,7 +122,7 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         );
       }
 
-      const sandbox = getSandbox(this.env.Sandbox, id);
+      const sandbox = getSandbox(this.env.Sandbox, this.state.id);
       const exec = await sandbox.exec(
         sandboxCommand({
           spec: this.state.spec,
@@ -120,12 +144,14 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
             error: result.stderr || `exit ${result.exitCode}`,
           }),
         );
+        await this.publishIndex();
         return;
       }
 
       this.setState(
         transition(this.state, "done", now(), "result written", { result }),
       );
+      await this.publishIndex();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (isTerminal(this.state.phase)) return;
@@ -142,6 +168,7 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       this.setState(
         transition(this.state, "failed", now(), "run aborted", { error: message }),
       );
+      await this.publishIndex();
     }
   }
 

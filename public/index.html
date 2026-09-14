@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ways · slice 1.2</title>
+    <title>ways · slice 1.3</title>
     <style>
       :root {
         color-scheme: dark;
@@ -23,6 +23,7 @@
       }
       main { max-width: 720px; margin: 0 auto; padding: 48px 20px 80px; }
       h1 { font-weight: 560; letter-spacing: -0.02em; margin: 0 0 8px; }
+      h2 { font-size: 14px; font-weight: 600; margin: 36px 0 10px; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
       .sub { color: var(--muted); margin-bottom: 28px; }
       label {
         display: block;
@@ -73,17 +74,42 @@
         font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
         color: var(--muted);
       }
+      #recent {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      #recent li {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 10px 12px;
+        border-top: 1px solid var(--line);
+        cursor: pointer;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #recent li:first-child { border-top: 0; }
+      #recent li:hover { background: #161616; }
+      #recent .id { color: var(--ink); }
+      #recent .when { color: var(--muted); }
     </style>
   </head>
   <body>
     <main>
       <h1>ways</h1>
-      <p class="sub">Slice 1.2: optional https gitUrl, shallow clone, then npm test if package.json exists. Spec is a label only.</p>
+      <p class="sub">Slice 1.3: list recent runs. Spec is a label; optional https gitUrl shallow-clones.</p>
       <label for="spec">spec</label>
       <textarea id="spec">clone ways and run its tests</textarea>
       <label for="gitUrl">gitUrl (https, optional)</label>
-      <input id="gitUrl" type="url" placeholder="https://github.com/mtclinton/ways.git" value="" />
+      <input id="gitUrl" type="url" placeholder="https://github.com/mtclinton/ways-fixture.git" value="" />
       <div><button id="go" type="button">Start run</button></div>
+
+      <h2>Recent runs</h2>
+      <ul id="recent"></ul>
+
       <section id="status" hidden>
         <p id="phase" class="phase"></p>
         <div id="meta" class="meta"></div>
@@ -95,11 +121,14 @@
       const specEl = document.getElementById("spec");
       const gitUrlEl = document.getElementById("gitUrl");
       const go = document.getElementById("go");
+      const recentEl = document.getElementById("recent");
       const status = document.getElementById("status");
       const phaseEl = document.getElementById("phase");
       const metaEl = document.getElementById("meta");
       const eventsEl = document.getElementById("events");
       const outEl = document.getElementById("out");
+
+      refreshRecent();
 
       go.addEventListener("click", async () => {
         go.disabled = true;
@@ -123,7 +152,9 @@
             outEl.textContent = JSON.stringify(payload, null, 2);
             return;
           }
+          await refreshRecent();
           await poll(payload.id);
+          await refreshRecent();
         } catch (err) {
           phaseEl.textContent = "failed";
           outEl.textContent = String(err);
@@ -131,6 +162,47 @@
           go.disabled = false;
         }
       });
+
+      async function refreshRecent() {
+        try {
+          const res = await fetch("/api/runs");
+          const body = await res.json();
+          recentEl.replaceChildren();
+          for (const run of body.runs ?? []) {
+            const li = document.createElement("li");
+            const left = document.createElement("div");
+            left.className = "id";
+            left.textContent = `${run.id.slice(0, 8)} · ${run.phase}${run.spec ? " · " + run.spec : ""}`;
+            const right = document.createElement("div");
+            right.className = "when";
+            right.textContent = run.createdAt?.replace("T", " ").replace("Z", "") ?? "";
+            li.append(left, right);
+            li.addEventListener("click", () => loadRun(run.id));
+            recentEl.append(li);
+          }
+          if (!(body.runs ?? []).length) {
+            const li = document.createElement("li");
+            li.textContent = "No runs yet";
+            li.style.cursor = "default";
+            recentEl.append(li);
+          }
+        } catch (err) {
+          recentEl.replaceChildren();
+          const li = document.createElement("li");
+          li.textContent = String(err);
+          recentEl.append(li);
+        }
+      }
+
+      async function loadRun(id) {
+        status.hidden = false;
+        go.disabled = true;
+        try {
+          await poll(id);
+        } finally {
+          go.disabled = false;
+        }
+      }
 
       async function poll(id) {
         for (let i = 0; i < 120; i++) {
@@ -146,13 +218,13 @@
       function render(run) {
         phaseEl.textContent = `${run.id} · slice ${run.slice} · ${run.phase}`;
         phaseEl.className = "phase " + run.phase;
-        let resultJson = null;
-        try {
-          const stdout = run.result?.stdout;
-          if (stdout) resultJson = JSON.parse(stdout);
-        } catch {
-          resultJson = null;
-        }
+        const resultJson = run.result?.json ?? (() => {
+          try {
+            return run.result?.stdout ? JSON.parse(run.result.stdout) : null;
+          } catch {
+            return null;
+          }
+        })();
         const clone = resultJson?.clone ?? null;
         const head = resultJson?.head ?? null;
         const execute = resultJson?.execute ?? null;
@@ -160,7 +232,9 @@
           run.gitUrl ? `gitUrl: ${run.gitUrl}` : null,
           clone != null ? `clone: ${clone}` : null,
           head != null ? `head: ${head}` : null,
-          execute ? `execute: ${execute.status} (exit ${execute.exitCode})` : null,
+          execute
+            ? `execute: ${execute.status}${execute.reason ? " (" + execute.reason + ")" : ""} (exit ${execute.exitCode})`
+            : null,
         ]
           .filter(Boolean)
           .join("\n");

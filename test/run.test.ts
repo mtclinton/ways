@@ -251,3 +251,47 @@ describe("slice 1.2.2 heavy-install skip", () => {
     ).toEqual({ action: "install-then-test" });
   });
 });
+
+import { RUN_INDEX_CAP, upsertRunIndex } from "../src/run-index";
+
+describe("run index", () => {
+  it("inserts newest-first and replaces by id", () => {
+    let runs = upsertRunIndex([], {
+      id: "a",
+      phase: "queued",
+      createdAt: "2026-09-14T01:00:00.000Z",
+      spec: "one",
+    });
+    runs = upsertRunIndex(runs, {
+      id: "b",
+      phase: "queued",
+      createdAt: "2026-09-14T02:00:00.000Z",
+      spec: "two",
+    });
+    expect(runs.map((r) => r.id)).toEqual(["b", "a"]);
+    runs = upsertRunIndex(runs, {
+      id: "a",
+      phase: "done",
+      createdAt: "2026-09-14T01:00:00.000Z",
+      spec: "one",
+      execute: { status: "ok" },
+    });
+    expect(runs[0].id).toBe("b");
+    expect(runs.find((r) => r.id === "a")?.phase).toBe("done");
+    expect(runs.find((r) => r.id === "a")?.execute).toEqual({ status: "ok" });
+  });
+
+  it("caps at 50", () => {
+    let runs = [];
+    for (let i = 0; i < RUN_INDEX_CAP + 5; i++) {
+      const n = String(i).padStart(2, "0");
+      runs = upsertRunIndex(runs, {
+        id: `id-${n}`,
+        phase: "queued",
+        createdAt: `2026-09-14T00:00:${n}.000Z`,
+      });
+    }
+    expect(runs).toHaveLength(RUN_INDEX_CAP);
+    expect(runs[0].id).toBe("id-54");
+  });
+});
