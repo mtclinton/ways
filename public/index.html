@@ -100,7 +100,7 @@
   <body>
     <main>
       <h1>ways</h1>
-      <p class="sub">Slice 1.7: optional gitRef (branch / tag / sha) on clone.</p>
+      <p class="sub">Slice 1.7.1: optional gitRef on clone; empty fields omitted.</p>
       <label for="spec">spec</label>
       <textarea id="spec">clone ways and run its tests</textarea>
       <label for="gitUrl">gitUrl (https, optional)</label>
@@ -143,7 +143,9 @@
         eventsEl.replaceChildren();
         outEl.textContent = "";
         try {
-          const body = { spec: specEl.value };
+          const body = {};
+          const spec = specEl.value.trim();
+          if (spec) body.spec = spec;
           const gitUrl = gitUrlEl.value.trim();
           if (gitUrl) body.gitUrl = gitUrl;
           const gitRef = gitRefEl.value.trim();

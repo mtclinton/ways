@@ -137,3 +137,7 @@ Optional `gitRef` on create — clone a specific branch, tag, or commit.
 4. `RESULT.json` includes `gitRef` (string or null) and `head` must be the checked-out commit.
 5. When `gitRef` omitted: unchanged default-branch shallow clone; `gitRef` null in RESULT.
 6. Still no Artifacts / Flagship / wallets. Scripts API only for previews.
+
+# Slice 1.7.1 contract
+
+Operator UI: optional `gitRef` input. POST `{ spec, gitUrl, gitRef }` omitting empty fields.
