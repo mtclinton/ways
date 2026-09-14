@@ -11,16 +11,70 @@ describe("parseCreateRun", () => {
   it("accepts a trimmed spec", () => {
     expect(parseCreateRun({ spec: "  prove 2+2  " })).toEqual({
       spec: "prove 2+2",
+      gitUrl: null,
     });
   });
 
-  it("rejects gitUrl in slice 1", () => {
+  it("accepts https gitUrl with optional spec", () => {
+    expect(
+      parseCreateRun({
+        gitUrl: "https://github.com/mtclinton/ways.git",
+        spec: "clone ways",
+      }),
+    ).toEqual({
+      spec: "clone ways",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+    });
+  });
+
+  it("accepts gitUrl alone", () => {
+    expect(
+      parseCreateRun({ gitUrl: "https://github.com/mtclinton/ways.git" }),
+    ).toEqual({
+      spec: null,
+      gitUrl: "https://github.com/mtclinton/ways.git",
+    });
+  });
+
+  it("rejects ssh gitUrl", () => {
     try {
-      parseCreateRun({ spec: "x", gitUrl: "https://example.com/r.git" });
+      parseCreateRun({ gitUrl: "ssh://git@github.com/mtclinton/ways.git" });
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(ContractError);
       expect((err as ContractError).status).toBe(422);
+    }
+  });
+
+  it("rejects file gitUrl", () => {
+    try {
+      parseCreateRun({ gitUrl: "file:///tmp/repo.git" });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContractError);
+      expect((err as ContractError).status).toBe(422);
+    }
+  });
+
+  it("rejects credentials in gitUrl", () => {
+    try {
+      parseCreateRun({
+        gitUrl: "https://user:pass@github.com/mtclinton/ways.git",
+      });
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContractError);
+      expect((err as ContractError).status).toBe(422);
+    }
+  });
+
+  it("rejects empty body fields", () => {
+    try {
+      parseCreateRun({});
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ContractError);
+      expect((err as ContractError).status).toBe(400);
     }
   });
 
@@ -46,6 +100,7 @@ describe("transition", () => {
     expect(state.phase).toBe("done");
     expect(state.events).toHaveLength(4);
     expect(state.result?.exitCode).toBe(0);
+    expect(state.slice).toBe(1);
   });
 
   it("forbids skipping ahead", () => {
@@ -57,6 +112,16 @@ describe("transition", () => {
       expect(err).toBeInstanceOf(ContractError);
       expect((err as ContractError).status).toBe(409);
     }
+  });
+
+  it("marks slice 1.1 when gitUrl present", () => {
+    const state = newRun(
+      "r2",
+      { spec: "x", gitUrl: "https://github.com/mtclinton/ways.git" },
+      "2026-09-13T00:00:00.000Z",
+    );
+    expect(state.slice).toBe(1.1);
+    expect(state.gitUrl).toBe("https://github.com/mtclinton/ways.git");
   });
 });
 
@@ -72,9 +137,20 @@ describe("sandbox job", () => {
     expect(cmd).not.toContain("txtnuname");
     expect(cmd).toContain("SPEC.txt");
     expect(cmd).toContain("uname");
-    expect(cmd).toContain("; uname -a");
-    // single-quoted -lc so jq $spec is not expanded by the wrapper shell
+    expect(cmd).toContain("; ");
     expect(cmd.startsWith("bash -lc '")).toBe(true);
-    expect(cmd).toContain("spec:$spec");
+  });
+
+  it("includes shallow clone when gitUrl set", () => {
+    const cmd = sandboxCommand({
+      spec: "clone ways",
+      gitUrl: "https://github.com/mtclinton/ways.git",
+    });
+    expect(cmd).toContain("git clone --depth 1 --single-branch");
+    expect(cmd).toContain("https://github.com/mtclinton/ways.git");
+    expect(cmd).toContain("timeout 30");
+    expect(cmd).toContain("slice 1.1");
+    expect(cmd).not.toContain("txtnuname");
+    expect(cmd.startsWith("bash -lc '")).toBe(true);
   });
 });

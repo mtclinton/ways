@@ -21,7 +21,11 @@ export default {
         const start = new Request(new URL("/start", request.url), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id, spec: input.spec }),
+          body: JSON.stringify({
+            id,
+            spec: input.spec,
+            gitUrl: input.gitUrl,
+          }),
         });
         return agent.fetch(start);
       }

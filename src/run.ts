@@ -1,4 +1,7 @@
 export const SLICE = 1 as const;
+export const SLICE_1_1 = 1.1 as const;
+
+export type Slice = typeof SLICE | typeof SLICE_1_1;
 
 export type Phase = "queued" | "preparing" | "running" | "done" | "failed";
 
@@ -22,8 +25,9 @@ export type ExecResult = {
 
 export type RunState = {
   id: string;
-  slice: typeof SLICE;
-  spec: string;
+  slice: Slice;
+  spec: string | null;
+  gitUrl: string | null;
   phase: Phase;
   events: RunEvent[];
   createdAt: string;
@@ -34,7 +38,8 @@ export type RunState = {
 };
 
 export type CreateRunInput = {
-  spec: string;
+  spec: string | null;
+  gitUrl: string | null;
 };
 
 export class ContractError extends Error {
@@ -47,37 +52,99 @@ export class ContractError extends Error {
 }
 
 const MAX_SPEC_BYTES = 8 * 1024;
+const MAX_GITURL_BYTES = 2 * 1024;
 
 export function parseCreateRun(body: unknown): CreateRunInput {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new ContractError(400, "body must be a JSON object");
   }
   const rec = body as Record<string, unknown>;
-  if ("gitUrl" in rec) {
-    throw new ContractError(
-      422,
-      "Slice 1 accepts spec.text only. gitUrl lands in slice 1.1.",
-    );
+
+  let spec: string | null = null;
+  if ("spec" in rec && rec.spec !== undefined && rec.spec !== null) {
+    if (typeof rec.spec !== "string") {
+      throw new ContractError(400, "spec must be a string");
+    }
+    const trimmed = rec.spec.trim();
+    if (trimmed.length === 0) {
+      throw new ContractError(400, "spec must be non-empty");
+    }
+    if (new TextEncoder().encode(trimmed).length > MAX_SPEC_BYTES) {
+      throw new ContractError(413, `spec exceeds ${MAX_SPEC_BYTES} bytes`);
+    }
+    spec = trimmed;
   }
-  const spec = rec.spec;
-  if (typeof spec !== "string") {
-    throw new ContractError(400, "spec must be a string");
+
+  let gitUrl: string | null = null;
+  if ("gitUrl" in rec && rec.gitUrl !== undefined && rec.gitUrl !== null) {
+    gitUrl = parseGitUrl(rec.gitUrl);
   }
-  const trimmed = spec.trim();
-  if (trimmed.length === 0) {
-    throw new ContractError(400, "spec must be non-empty");
+
+  if (spec === null && gitUrl === null) {
+    throw new ContractError(400, "at least one of spec or gitUrl is required");
   }
-  if (new TextEncoder().encode(trimmed).length > MAX_SPEC_BYTES) {
-    throw new ContractError(413, `spec exceeds ${MAX_SPEC_BYTES} bytes`);
-  }
-  return { spec: trimmed };
+
+  return { spec, gitUrl };
 }
 
-export function newRun(id: string, spec: string, now: string): RunState {
+export function parseGitUrl(raw: unknown): string {
+  if (typeof raw !== "string") {
+    throw new ContractError(400, "gitUrl must be a string");
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    throw new ContractError(400, "gitUrl must be non-empty");
+  }
+  if (new TextEncoder().encode(trimmed).length > MAX_GITURL_BYTES) {
+    throw new ContractError(413, `gitUrl exceeds ${MAX_GITURL_BYTES} bytes`);
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new ContractError(400, "gitUrl must be a valid URL");
+  }
+
+  if (url.protocol !== "https:") {
+    throw new ContractError(
+      422,
+      "gitUrl must be https (ssh/file/git:// rejected)",
+    );
+  }
+  if (url.username || url.password) {
+    throw new ContractError(422, "gitUrl must not include credentials");
+  }
+  if (url.search || url.hash) {
+    throw new ContractError(422, "gitUrl must be host+path only");
+  }
+  if (!url.hostname || url.pathname === "") {
+    throw new ContractError(422, "gitUrl must include host and path");
+  }
+
+  // Normalize to origin + pathname (drop trailing slash except root)
+  const path =
+    url.pathname.length > 1 && url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+  return `${url.origin}${path}`;
+}
+
+export function newRun(
+  id: string,
+  input: CreateRunInput | string,
+  now: string,
+): RunState {
+  const parsed: CreateRunInput =
+    typeof input === "string"
+      ? { spec: input, gitUrl: null }
+      : { spec: input.spec, gitUrl: input.gitUrl };
+  const slice: Slice = parsed.gitUrl ? SLICE_1_1 : SLICE;
   return {
     id,
-    slice: SLICE,
-    spec,
+    slice,
+    spec: parsed.spec,
+    gitUrl: parsed.gitUrl,
     phase: "queued",
     events: [
       {

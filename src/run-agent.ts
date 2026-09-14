@@ -4,6 +4,7 @@ import {
   isTerminal,
   newRun,
   transition,
+  type CreateRunInput,
   type RunState,
 } from "./run";
 import { sandboxCommand } from "./sandbox-job";
@@ -13,7 +14,7 @@ export { Sandbox };
 type WaysEnv = {
   RunAgent: DurableObjectNamespace;
   Sandbox: DurableObjectNamespace<Sandbox>;
-  ARTIFACTS: {
+  ARTIFACTS?: {
     create: (
       name: string,
       opts?: { description?: string; setDefaultBranch?: string },
@@ -22,7 +23,11 @@ type WaysEnv = {
 };
 
 export class RunAgent extends Agent<WaysEnv, RunState> {
-  override initialState: RunState = newRun("pending", "", new Date(0).toISOString());
+  override initialState: RunState = newRun(
+    "pending",
+    { spec: null, gitUrl: null },
+    new Date(0).toISOString(),
+  );
 
   override async onRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -35,9 +40,19 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
       if (this.state.id !== "pending" && this.state.phase !== "queued") {
         return Response.json(this.publicState(), { status: 409 });
       }
-      const body = (await request.json()) as { id: string; spec: string };
+      const body = (await request.json()) as {
+        id: string;
+        spec: string | null;
+        gitUrl?: string | null;
+      };
+      const input: CreateRunInput = {
+        spec: body.spec ?? null,
+        gitUrl: body.gitUrl ?? null,
+      };
+      // empty string spec from legacy callers → treat as null if gitUrl set
+      if (input.spec === "") input.spec = null;
       const now = new Date().toISOString();
-      this.setState(newRun(body.id, body.spec, now));
+      this.setState(newRun(body.id, input, now));
       this.ctx.waitUntil(this.execute());
       return Response.json(this.publicState(), { status: 202 });
     }
@@ -66,12 +81,22 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
         );
       } else {
         this.setState(
-          transition(this.state, "running", now(), "sandbox started (no artifacts namespace yet)"),
+          transition(
+            this.state,
+            "running",
+            now(),
+            "sandbox started (no artifacts namespace yet)",
+          ),
         );
       }
 
       const sandbox = getSandbox(this.env.Sandbox, id);
-      const exec = await sandbox.exec(sandboxCommand(this.state.spec));
+      const exec = await sandbox.exec(
+        sandboxCommand({
+          spec: this.state.spec,
+          gitUrl: this.state.gitUrl,
+        }),
+      );
 
       const result = {
         stdout: exec.stdout ?? "",
@@ -113,6 +138,7 @@ export class RunAgent extends Agent<WaysEnv, RunState> {
 
   private async openArtifact(id: string) {
     try {
+      if (!this.env.ARTIFACTS) return undefined;
       const created = await this.env.ARTIFACTS.create(`run-${id}`, {
         description: `ways slice-1 run ${id}`,
         setDefaultBranch: "main",
