@@ -167,3 +167,14 @@ Private GitHub HTTPS clone via optional `GITHUB_TOKEN` Worker secret.
 5. If no token and the repo is private → clone failed (expected).
 6. Token is passed into the sandbox only via `sandbox.exec(..., { env: { GITHUB_TOKEN } })`, never embedded in the job command string or RESULT/gitUrl fields.
 7. Still no Artifacts / Flagship / wallets required for this slice.
+
+# Slice 1.9 contract
+
+Desk polish — operator README and UI for previews. Builds on 1.4–1.8; no new runtime products.
+
+1. `README.md` is the **operator** doc: what a run is (`spec` + optional `gitUrl` + optional `gitRef`), what it will not do (no prod deploy of `ways`, no wrangler-in-sandbox, no tokens in `gitUrl`), public vs private GitHub (`GITHUB_TOKEN`; clean `RESULT.gitUrl`), preview kinds (static GET + worker `ways-p-<8>` + DELETE expire), and fixture links.
+2. Operator UI on a loaded run:
+   - `preview.status === "ready"` → link **Static preview** → `GET /api/runs/:id/preview`
+   - `workerPreview.status === "ready"` → link **Worker preview** → `workerPreview.url` and button **Expire preview** → `DELETE /api/runs/:id/preview` then refresh
+   - `workerPreview.status === "expired"` → show expired (no Expire button)
+3. Recent-runs list, start form, and `gitRef` field unchanged. Handlers from 1.4–1.6 unchanged.

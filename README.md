@@ -1,51 +1,64 @@
 # ways
 
-Working title for an agent shipyard on Cloudflare. The public name is still open (`slipway` is taken).
+Operator desk for an agent shipyard on Cloudflare. One run: submit a spec (and optional git clone), get a trace.
 
-Slice 1 is intentionally small: **one spec → one sandbox → one trace**. That is the path we will keep extending.
+Live: https://ways.max-977.workers.dev
 
-## What you just got
+## What a run is
 
-- `POST /api/runs` / `GET /api/runs/:id` with a typed state machine
-- A `RunAgent` Durable Object (Agents SDK) per run
-- A Cloudflare Sandbox that writes `/workspace/run/RESULT.json`
-- Optional Artifacts repo `run-<id>` (run still succeeds if the namespace is missing)
-- A one-page operator UI
-- Contract tests for the state machine
+`POST /api/runs` with:
 
-## Fast path on your machine
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `spec` | at least one of spec / gitUrl | Label / note only — never executed as shell |
+| `gitUrl` | optional | Public or private GitHub HTTPS URL (`https://github.com/...`) |
+| `gitRef` | optional | Branch, tag, or sha to check out |
 
-Needs Node 20+, a Cloudflare account, and Wrangler login.
+Phases: `queued → preparing → running → done` (or `→ failed`). Poll `GET /api/runs/:id`. List recent with `GET /api/runs`.
+
+## What it will not do
+
+- **No prod deploy of `ways`** — preview Workers are forced to `ways-p-<8 hex>` only
+- **No wrangler-in-sandbox** — preview deploy uses the Scripts API from the Worker, not `wrangler` inside the sandbox
+- **No tokens in `gitUrl`** — credentials-in-URL (`userinfo`) are rejected; never put a PAT in the URL
+
+## Public vs private GitHub
+
+- **Public** repos clone anonymously over HTTPS.
+- **Private** repos need the Worker secret `GITHUB_TOKEN`. Auth is applied only for the clone (`Authorization` header / Basic `x-access-token`); it is never written into RESULT or traces.
+- `RESULT.gitUrl` is always the clean https URL **with no userinfo**.
+
+## Preview kinds
+
+After a successful clone:
+
+1. **Static** — if the repo has `public/index.html` or `index.html`:
+   - `GET /api/runs/:id/preview` → `200` `text/html` (HTML stored on the run DO)
+2. **Worker** — if the clone has `wrangler.jsonc` / `wrangler.toml`:
+   - Deployed as `https://ways-p-<8>.max-977.workers.dev`
+   - Auto-expires after ~1 hour
+   - `DELETE /api/runs/:id/preview` → expire immediately (`workerPreview.status` becomes `expired`)
+
+Static GET is unchanged by DELETE; DELETE only removes the preview Worker script.
+
+## Fixtures
+
+| Repo | Use |
+| --- | --- |
+| [ways-fixture](https://github.com/mtclinton/ways-fixture) | Basic clone / execute |
+| [ways-worker-fixture](https://github.com/mtclinton/ways-worker-fixture) | Worker preview deploy |
+| [ways-starfield](https://github.com/mtclinton/ways-starfield) | Static + visual preview |
+| [ways-globe](https://github.com/mtclinton/ways-globe) | Static / demo |
+| [ways-private-fixture](https://github.com/mtclinton/ways-private-fixture) | Private clone (needs `GITHUB_TOKEN`) |
+
+## Local
 
 ```bash
-cd ways
 npm install
 npx wrangler login
 npx wrangler types
-npm run check
+npm test
 npm run dev
 ```
 
-Open the printed localhost URL. Submit a spec. You should see phases `queued → preparing → running → done` and a `RESULT.json` blob.
-
-First deploy:
-
-```bash
-npx wrangler deploy
-```
-
-If Artifacts complains about namespace `ways`, create it once (name must match `wrangler.jsonc`):
-
-```bash
-npx wrangler artifacts namespace create ways
-```
-
-(If that subcommand has shifted in your Wrangler, use the dashboard: Workers → Artifacts → namespace `ways`.)
-
-## Quality bar
-
-`CONTRACT.md` is the gate. If a change does not make that document truer, it is the next slice.
-
-## Not in this repo yet
-
-Grok Bots, Mesh, Wallets, Flagship, Email, Voice, Temporary Accounts. Factory tools stay outside the runtime.
+`CONTRACT.md` is the gate for what each slice must keep true.

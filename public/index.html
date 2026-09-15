@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ways · slice 1.5</title>
+    <title>ways · slice 1.9</title>
     <style>
       :root {
         color-scheme: dark;
@@ -54,6 +54,19 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.5; cursor: default; }
+      #expirePreview {
+        margin-top: 0;
+        margin-left: 10px;
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        font-weight: 500;
+        padding: 4px 10px;
+        font-size: 12px;
+        vertical-align: middle;
+      }
+      #previewControls p { margin: 4px 0; }
+      #previewControls a { color: var(--ok); }
       #status { margin-top: 28px; }
       ol { padding-left: 18px; }
       .phase { font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -100,7 +113,7 @@
   <body>
     <main>
       <h1>ways</h1>
-      <p class="sub">Slice 1.7.1: optional gitRef on clone; empty fields omitted.</p>
+      <p class="sub">Slice 1.9: operator desk — static &amp; worker preview links, expire.</p>
       <label for="spec">spec</label>
       <textarea id="spec">clone ways and run its tests</textarea>
       <label for="gitUrl">gitUrl (https, optional)</label>
@@ -115,7 +128,14 @@
       <section id="status" hidden>
         <p id="phase" class="phase"></p>
         <div id="meta" class="meta"></div>
-        <p id="previewLink" hidden><a href="#" target="_blank" rel="noopener">Preview</a></p>
+        <div id="previewControls" class="meta" hidden>
+          <p id="staticPreview" hidden><a id="staticPreviewLink" href="#" target="_blank" rel="noopener">Static preview</a></p>
+          <p id="workerPreviewReady" hidden>
+            <a id="workerPreviewLink" href="#" target="_blank" rel="noopener">Worker preview</a>
+            <button id="expirePreview" type="button">Expire preview</button>
+          </p>
+          <p id="workerPreviewExpired" hidden>Worker preview: expired</p>
+        </div>
         <ol id="events"></ol>
         <pre id="out"></pre>
       </section>
@@ -129,11 +149,35 @@
       const status = document.getElementById("status");
       const phaseEl = document.getElementById("phase");
       const metaEl = document.getElementById("meta");
-      const previewLink = document.getElementById("previewLink");
+      const previewControls = document.getElementById("previewControls");
+      const staticPreview = document.getElementById("staticPreview");
+      const staticPreviewLink = document.getElementById("staticPreviewLink");
+      const workerPreviewReady = document.getElementById("workerPreviewReady");
+      const workerPreviewLink = document.getElementById("workerPreviewLink");
+      const workerPreviewExpired = document.getElementById("workerPreviewExpired");
+      const expirePreview = document.getElementById("expirePreview");
       const eventsEl = document.getElementById("events");
       const outEl = document.getElementById("out");
+      let currentRunId = null;
 
       refreshRecent();
+
+      expirePreview.addEventListener("click", async () => {
+        if (!currentRunId) return;
+        expirePreview.disabled = true;
+        try {
+          const res = await fetch(`/api/runs/${currentRunId}/preview`, { method: "DELETE" });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            outEl.textContent = JSON.stringify({ deleteStatus: res.status, body }, null, 2);
+          }
+          await loadRun(currentRunId);
+        } catch (err) {
+          outEl.textContent = String(err);
+        } finally {
+          expirePreview.disabled = false;
+        }
+      });
 
       go.addEventListener("click", async () => {
         go.disabled = true;
@@ -253,13 +297,25 @@
         ]
           .filter(Boolean)
           .join("\n");
-        const a = previewLink.querySelector("a");
-        if (resultJson?.preview?.status === "ready") {
-          a.href = `/api/runs/${run.id}/preview`;
-          previewLink.hidden = false;
+        currentRunId = run.id;
+        const previewReady = resultJson?.preview?.status === "ready";
+        const wp = resultJson?.workerPreview;
+        const wpReady = wp?.status === "ready" && wp?.url;
+        const wpExpired = wp?.status === "expired";
+        if (previewReady) {
+          staticPreviewLink.href = `/api/runs/${run.id}/preview`;
+          staticPreview.hidden = false;
         } else {
-          previewLink.hidden = true;
+          staticPreview.hidden = true;
         }
+        if (wpReady) {
+          workerPreviewLink.href = wp.url;
+          workerPreviewReady.hidden = false;
+        } else {
+          workerPreviewReady.hidden = true;
+        }
+        workerPreviewExpired.hidden = !wpExpired;
+        previewControls.hidden = !(previewReady || wpReady || wpExpired);
         eventsEl.replaceChildren();
         for (const ev of run.events ?? []) {
           const li = document.createElement("li");
